@@ -8,7 +8,7 @@
 <?php
 
 use PHPUnit\Framework\TestCase;
-use Laika\Model\ConnectionManager;
+use Laika\Model\Connection;
 
 
 class UnitTest extends TestCase
@@ -26,16 +26,16 @@ class UnitTest extends TestCase
                 'port'     => getenv('DB_PORT')
             ],
             'sqlite' => [
-                'driver'   => $driver,
-                'database' => getenv('DB_PATH')
+                'driver'    => $driver,
+                'host'      => getenv('DB_PATH'),
+                'database'  => getenv('DB_NAME')
             ],
             default =>  [
-                'driver'   => $driver,
-                'database' => getenv('DB_PATH')
+                'driver'   => 'none'
             ]
         };
 
-        ConnectionManager::add($config);
-        $this->assertNotNull(ConnectionManager::get(), "Failed to initialize connection for {$driver}");
+        Connection::add($config);
+        $this->assertNotNull(Connection::get(), "Failed to initialize connection for {$driver}");
     }
 }

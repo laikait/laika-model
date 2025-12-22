@@ -33,7 +33,7 @@ jobs:
           --health-retries=3
 
       postgres:
-        image: postgres:16
+        image: postgres:18
         env:
           POSTGRES_DB: test
           POSTGRES_USER: laika
@@ -100,6 +100,7 @@ jobs:
           else
             echo "DB_DRIVER=sqlite" >> $GITHUB_ENV
             echo "DB_PATH=:memory:" >> $GITHUB_ENV
+            echo "DB_NAME=test" >> $GITHUB_ENV
           fi
 
       - name: Wait for database readiness

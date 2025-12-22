@@ -18,39 +18,81 @@ use PDO;
 
 class Config
 {
-    protected array $config;
+    /**
+     * PDO Database Connection Config Parameters
+     * @var array{driver:string,host:string,port:string|int,database:string,username:string,password:string,options?:array} $config
+     * @return void
+     */
+    private array $config;
+
+    /**
+     * PDO Object
+     * @var PDO $pdo
+     */
     protected PDO $pdo;
 
     /**
-     * @param array{driver:string, username:string, password:string} $driver
+     * Driver Name
+     * @var string $driver
+     */
+    protected string $driver;
+
+    /**
+     * Create PDO Database Connection
+     * @param array{driver:string,host:string,port?:string|int,database?:string,username?:string,password?:string,options?:array} $config
      */
     public function __construct(array $config)
     {
-        $this->config   =   $config;
-        $this->pdo      =   $this->createPDO();
+        // Check Host Key Exists
+        if (empty($config['host'])) {
+            throw new InvalidArgumentException('[host] Key Not Found in Config!');
+        }
+        // Check Driver Key Exists
+        if (empty($config['driver'])) {
+            throw new InvalidArgumentException('[driver] Key Not Found in Config!');
+        }
+        $this->config = $config;
+        $this->pdo = $this->create();
     }
 
-    public function getPDO(): PDO
+    /**
+     * Get PDO Object
+     * @return PDO
+     */
+    public function pdo(): PDO
     {
         return $this->pdo;
     }
 
-    protected function createPDO(): PDO
+    /**
+     * Get Driver
+     * @return string Driver Name
+     */
+    public function driver(): string
     {
-        $driver = strtolower($this->config['driver'] ?? '');
+        return $this->driver;
+    }
 
-        if (empty($driver)) {
-            throw new InvalidArgumentException("Invalid Driver Detected: '{$driver}'.");
+    /**
+     * Create PDO Object
+     * @return PDO
+     */
+    protected function create(): PDO
+    {
+        $this->driver = $this->config['driver'];
+
+        if (empty($this->driver)) {
+            throw new InvalidArgumentException("PDO Driver Name Should Not Be Empty: '{$this->driver}'.");
         }
 
-        $driverClass = __NAMESPACE__ . '\\Drivers\\' . ucfirst($driver);
+        $class = __NAMESPACE__ . '\\Driver\\' . ucfirst($this->driver);
 
-        if (!class_exists($driverClass)) {
-            throw new InvalidArgumentException("Unsupported Driver: '{$driver}'");
+        if (!class_exists($class)) {
+            throw new InvalidArgumentException("Invalid PDO Driver Detected: [{$this->driver}]");
         }
 
-        $driverInstance = new $driverClass();
-        $dsn = $driverInstance->dsn($this->config);
+        $obj = new $class($this->config);
+        $dsn = $obj->dsn();
 
         $username   =   $this->config['username'] ?? null;
         $password   =   $this->config['password'] ?? null;
@@ -61,6 +103,6 @@ class Config
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
         ];
         $options += $defaultOptions;
-        return new PDO($dsn, $username, $password, $defaultOptions);
+        return new PDO($dsn, $username, $password, $options);
     }
 }
