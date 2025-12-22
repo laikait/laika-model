@@ -1,8 +1,7 @@
 {
     "name": "laikait/laika-model",
-    "description": "Laika Database Model For Anytype of PHP Application Use.",
-    "keywords": ["Database", "PHP Database", "Database Model", "Laika DB Model"],
-    "type": "package",
+    "description": "A PDO Database Model",
+    "type": "project",
     "license": "MIT",
     "autoload": {
         "psr-4": {
