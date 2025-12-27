@@ -142,7 +142,11 @@ class Schema
         return preg_replace('/[^a-zA-Z0-9_]/', '', $name);
     }
 
-    public function __toString()
+    /**
+     * Execute Queries
+     * @return string
+     */
+    public function execute(): string
     {
         // Set Queries
         Log::add($this->sqls, $this->connection);
