@@ -621,20 +621,34 @@ class Model
         }
     }
 
-    // Generate UUID
     /**
-     * @param ?string $column Optional Argument. Default is null
+     * Generate UUID
+     * @param string $prefix UUID Prefix. Example: 'uuid'
      * @return string
      */
-    public function uuid(): string
+    public function uuid(string $prefix = 'uuid'): string
     {
+        // Set Prefix
+        $prefix = empty($prefix) ? 'uuid' : strtolower($prefix);
+
+        // Get Random Number From Microtime
         $time = substr(str_replace('.', '', (string) microtime(true)), -6);
-        $uid = 'uuid-'.bin2hex(random_bytes(3)).'-'.bin2hex(random_bytes(3)).'-'.bin2hex(random_bytes(3)).'-'.bin2hex(random_bytes(3)).'-'.$time;
+
+        // Make Random Bytes
+        $str1 = bin2hex(random_bytes(3));
+        $str2 = bin2hex(random_bytes(3));
+        $str3 = bin2hex(random_bytes(3));
+        $str4 = bin2hex(random_bytes(3));
+
+        // Make UUID
+        $uuid = "{$prefix}-{$str1}-{$str2}-{$str3}-{$str4}-{$time}";
+
         // Check Already Exist & Return
-        if ($this->select($this->uuid)->where([$this->uuid => $uid])->first()) {
+        if ($this->select($this->uuid)->where([$this->uuid => $uuid])->first()) {
             return $this->uuid();
         }
-        return $uid;
+
+        return $uuid;
     }
 
     ####################################################################
