@@ -324,8 +324,7 @@ class Model
      */
     public function limit(int|string $limit): Model
     {
-        $limit = (int) $limit;
-        $this->limit = ($limit < 1) ? 1 : $limit;
+        $this->limit = (int) $limit;
         return $this;
     }
 
