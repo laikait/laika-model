@@ -330,12 +330,12 @@ class Model
 
     /**
      * Offset Clause
-     * @param int|string $page Optional Argument. Default is Page Number 1
+     * @param int|string $page Page Number. Default is Page Number 1
      * @return Model
      */
-    public function offset(int|string $pageNumber = 1): Model
+    public function offset(int|string $page = 1): Model
     {
-        $offset = ((int)$pageNumber - 1) * (int) $this->limit;
+        $offset = ((int)$page - 1) * (int) $this->limit;
         $this->offset = ($offset < 0) ? 0 : $offset;
         return $this;
     }
