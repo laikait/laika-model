@@ -1,5 +1,5 @@
-# Cloud Bill Master Database Model
-Cloud Bill Master Singleton Database Model is a PHP-based project that implements a robust, object-oriented database management system for handling complex transactions and data manipulation tasks. Built on top of MySQL, this singleton model aims to provide a high-performance, flexible, and secure way to interact with databases in PHP applications, specifically designed to streamline billing and cloud data management systems.
+# Laika Single/Multi Connecton Database Model
+Laika Model Singleton Database Model is a PHP-based project that implements a robust, object-oriented database management system for handling complex transactions and data manipulation tasks. Built on top of MySQL, this singleton model aims to provide a high-performance, flexible, and secure way to interact with databases in PHP applications, specifically designed to streamline billing and cloud data management systems.
 
 # Key Features
 * <b>Object-Oriented Structure</b>: Built with PHP OOP principles, ensuring code reusability, scalability, and maintainability.</br>
@@ -18,7 +18,7 @@ Cloud Bill Master Singleton Database Model is a PHP-based project that implement
 ## Installation
 Install with composer:
 ```bash
-composer require cb-master/laika-model
+composer require laikait/laika-model
 ```
 ##  Connection Manager
 Configure your database settings in your PHP application page top section.
@@ -34,19 +34,19 @@ Array $config:
 String $name: Default is 'default'. Has Read & Write Access
 
 ```php
-use Laika\Model\ConnectionManager;
+use Laika\Model\Connection;
 
 // Require Autoload File
 require_once("./vendor/autoload.php");
 // Add Default Connection Manager
-ConnectionManager::add(array $config); // DB Default Connection Details for Read & Write both
+Connection::add(array $config); // DB Default Connection Details for Read & Write both
 
 /**
  * Add Multiple Connection Manager. Default is for read, write or foreign
  */
-ConnectionManager::add(array $config, 'other'); // DB Another Connection for Read & Write. Local or Foreign
-ConnectionManager::add(array $ReadDbConfig, 'read'); // DB Connection Details for Read
-ConnectionManager::add(array $WriteDbConfig, 'write'); // DB Connection Details for Write
+Connection::add(array $config, 'other'); // DB Another Connection for Read & Write. Local or Foreign
+Connection::add(array $ReadDbConfig, 'read'); // DB Connection Details for Read
+Connection::add(array $WriteDbConfig, 'write'); // DB Connection Details for Write
 ```
 ## Usage
 This project provides a base for any PHP application needing a reliable and efficient database model, especially useful for billing and cloud services. For detailed usage examples, please see the given method implementation below.
@@ -57,67 +57,39 @@ This project provides a base for any PHP application needing a reliable and effi
 $pdo = ConnectionManager::get();
 
 // Get Read PDO Connection if Configured
-$pdo = ConnectionManager::get('read');
+$pdo = Connection::get('read');
 // Get Write PDO Connection if Configured
-$pdo = ConnectionManager::get('write');
+$pdo = Connection::get('write');
 // Get Other PDO Connection if Configured
-$pdo = ConnectionManager::get('other');
+$pdo = Connection::get('other');
 ```
 Now you can execute any query by using any PDO methods.
 ### Get Laika Model Pre-build Methods
 To use Laika Pre-build methods instead of PDO Methods you can use DB Class from Laika model.
 
 ```php
-use Laika\Model\DB;
+use Laika\Model\Model;
 
 // Get Default DB Model
-$db = DB::getInstance();
+$model = new Model();
 
 // Get Read DB Model if Configured
-$db = DB::getInstance('read');
+$model = new Model('read');
 // Get Write DB Model if Configured
-$db = DB::getInstance('write');
+$model = new Model('write');
 // Get Other DB Model if Configured
-$db = DB::getInstance('other');
+$model = new Model('other');
 
 // Get All Columns Data from Table
-$data = $db->table('table')->get();
+$data = $model->table('table')->get();
 
 // Get Selected Columns Data from Table
-$data = $db->table('table')->select('column1,column2,column3')->get();
+$data = $model->table('table')->select('column1,column2,column3')->get();
 
 // Get Data from Table By Using Strings in Where Clause
-$data = $db->table('table')->where('column', '=', 'value')->get();
+$data = $model->table('table')->where(['column' => 'valjue'])->get();
 // OR
 // Get Data from Table By Using Array in Where Clause
-$data = $db->table('table')->where(['id' => 1,'country'=>'usa'], '=', null, 'AND')->get();
+$data = $model->table('table')->where(['id' => 1,'country'=>'usa'], '=', 'AND')->get();
 
-
-
-
-
-
-
-```
-Use between() method. Its like where. You also can use it with where() method. Between method needs 3 arguments {between(string $column, int|string $min, int|string $max, string $compare = 'AND')}
-```php
-// Get All Data Between min and max
-Model::table('table_name')->between('id', 1, 10)->get();
-
-// Get All Data Between min and max with multiple condition
-Model::table('table_name')->between('id', 1, 10)->between('id', 50, 60)->get();
-
-```
-
-### Get Limited Data From Table (Default is 20)
-Additional method to use is limit()
-```php
-// Get Data for Default Limit 20
-Model::table('table_name')->limit()->get();
-
-// Get Data for Default Limit 20 With Offset
-Model::table('table_name')->limit()->offset(0)->get();
-
-// Custom Limit Set
-Model::table('table_name')->limit(40)->get();
 ```
