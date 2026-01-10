@@ -80,33 +80,30 @@ class Model
     /**
      * @var string $connection Connection Name
      */
+    protected string $connection;
 
-    protected string $connection = '';
     /**
      * @var string $table Table Name
      */
-
     public string $table;
 
     /**
      * @var string $uuid UUID Column Name
      */
-    public string $id;
+    public string $id = 'id';
 
     /**
      * @var string $uuid UUID Column Name
      */
-    public string $uuid;
+    public string $uuid = 'uuid';
 
     ####################################################################
     /*------------------------- EXTERNAL API -------------------------*/
     ####################################################################
 
-    public function __construct(string $connection = 'default')
+    public function __construct(?string $connection = null)
     {
-        // Check Required Columns
-        $this->checkRequiredProperties();
-        $this->connection = $connection;
+        $this->connection = $connection ?: 'default';
         $this->pdo = Connection::get($this->connection);
         $this->driver = Connection::driver($this->connection);
     }
@@ -727,24 +724,6 @@ class Model
         $this->limit    =   null;
         $this->offset   =   null;
         $this->having   =   [];
-    }
-
-    protected function checkRequiredProperties(): void
-    {
-        // Check Table Name
-        if (empty($this->table)) {
-            throw new InvalidArgumentException("Table Name Doesn't Exists!");
-        }
-
-        // Check ID Column
-        if (empty($this->id)) {
-            throw new InvalidArgumentException("[id] Column Name Not Defined in Model.");
-        }
-
-        // Check UUID Column
-        if (empty($this->uuid)) {
-            throw new InvalidArgumentException("[uuid] Column Name Not Defined in Model.");
-        }
     }
 
     /**
