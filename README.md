@@ -54,7 +54,7 @@ This project provides a base for any PHP application needing a reliable and effi
 ### Get PDO Connection
 ```php
 // Get Default PDO Connection
-$pdo = ConnectionManager::get();
+$pdo = Connection::get();
 
 // Get Read PDO Connection if Configured
 $pdo = Connection::get('read');
