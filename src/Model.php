@@ -484,7 +484,7 @@ class Model
     /**
      * Update Clause
      * @param array $data Required data to update
-     * @return bool Returns true on success, false on failure
+     * @return int Returns the number of affected rows
      */
     public function update(array $data): int
     {
@@ -568,7 +568,7 @@ class Model
      * Get Meta
      * @return array{} Returns the results as an array
      */
-    public function meta(): array
+    public function getMeta(): array
     {
         if (empty($this->table)) {
             throw new InvalidArgumentException("Table Name Doesn't Exists.");
@@ -590,9 +590,9 @@ class Model
      * Get Columns
      * @return array{} Returns the results as an array
      */
-    public function columns(): array
+    public function getColumns(): array
     {
-        $meta = $this->meta();
+        $meta = $this->getMeta();
         return array_map(function($v){
             return $v['name'];
         }, $meta);

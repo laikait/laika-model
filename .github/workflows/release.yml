@@ -1,4 +1,4 @@
-name: Laika Model CI Pipeline
+name: Laika Model Release & Test Workflow
 
 on:
   push:
