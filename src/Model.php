@@ -484,7 +484,7 @@ class Model
     /**
      * Update Clause
      * @param array $data Required data to update
-     * @return bool Returns true on success, false on failure
+     * @return int Returns the number of affected rows
      */
     public function update(array $data): int
     {
