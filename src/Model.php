@@ -85,7 +85,7 @@ class Model
     /**
      * @var string $table Table Name
      */
-    public string $table;
+    protected string $table;
 
     /**
      * @var string $uuid UUID Column Name
@@ -127,6 +127,15 @@ class Model
         $this->reset();
         $this->table = $table;
         return $this;
+    }
+
+    /**
+     * Get Table Name
+     * @return string
+     */
+    public function getTable(): string
+    {
+        return $this->table;
     }
 
     /**
