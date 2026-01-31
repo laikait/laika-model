@@ -145,10 +145,8 @@ class Model
      */
     public function select(?string $columns = null): Model
     {
-        if (!$columns) {
-            return $this;
-        }
-        if (trim($columns) == '*') {
+        if (empty($columns) || trim($columns) == '*') {
+            $this->columns = '*';
             return $this;
         }
         // Add Backtick
