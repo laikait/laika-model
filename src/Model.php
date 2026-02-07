@@ -510,7 +510,9 @@ class Model
             $sql .= " " . implode(' ', $this->joins);
         }
 
-        $sql .= " WHERE " . implode(' AND ', $this->wheres);
+        if (!empty($this->wheres)) {
+            $sql .= " WHERE " . implode(' ', $this->wheres);
+        }
 
         // Add Queries to Log
         Log::add($sql, $this->connection);
