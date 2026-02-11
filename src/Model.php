@@ -442,8 +442,12 @@ class Model
         }
 
         // Execute
-        $stmt = $this->pdo->prepare($sql);
-        $result = $stmt->execute($bindings);
+        try {
+            $stmt = $this->pdo->prepare($sql);
+            $result = $stmt->execute($bindings);
+        } catch (\Throwable $th) {
+            throw new \RuntimeException($th->getMessage(), $th->getCode(), $th);
+        }
 
         // Reset builder state
         $this->reset();
