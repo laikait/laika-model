@@ -446,7 +446,7 @@ class Model
             $stmt = $this->pdo->prepare($sql);
             $result = $stmt->execute($bindings);
         } catch (\Throwable $th) {
-            throw new \RuntimeException($th->getMessage(), $th->getCode(), $th);
+            throw new \RuntimeException($th->getMessage());
         }
 
         // Reset builder state
