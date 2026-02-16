@@ -19,6 +19,7 @@ use Throwable;
 use PDOException;
 use InvalidArgumentException;
 use Laika\Model\Compile\Quote;
+use RuntimeException;
 
 class Model
 {
@@ -90,12 +91,22 @@ class Model
     /**
      * @var string $uuid UUID Column Name
      */
-    public string $id = 'id';
+    protected string $id = 'id';
 
     /**
      * @var string $uuid UUID Column Name
      */
-    public string $uuid = 'uuid';
+    protected string $uuid = 'uuid';
+
+    /**
+     * @var bool $softDelete
+     */
+    protected bool $softDelete = false;
+
+    /**
+     * @var string $deletedAtColumn
+     */
+    protected string $deletedAtColumn = 'deleted_at';
 
     ####################################################################
     /*------------------------- EXTERNAL API -------------------------*/
@@ -135,7 +146,25 @@ class Model
      */
     public function getTable(): string
     {
-        return $this->table;
+        return $this->sanitize($this->table);
+    }
+
+    /**
+     * Get ID Column Name
+     * @return string
+     */
+    public function getId(): string
+    {
+        return $this->id;
+    }
+
+    /**
+     * Get UUID Column Name
+     * @return string
+     */
+    public function getUid(): string
+    {
+        return $this->uuid;
     }
 
     /**
@@ -157,6 +186,16 @@ class Model
             return call_user_func([new Quote($v, $this->driver), 'sql']);
         }, $array);
         $this->columns = implode(',', $trimed);
+        return $this;
+    }
+
+    /**
+     * Select Distinct Rows
+     * @return Model
+     */
+    public function distinct(): Model
+    {
+        $this->columns = 'DISTINCT ' . $this->columns;
         return $this;
     }
 
@@ -203,6 +242,17 @@ class Model
     }
 
     /**
+     * Where Not Equal
+     * @param array|string $where Required column name or array of column-value pairs
+     * @param string $compare Optional comparison type (AND, OR)
+     * @return Model
+     */
+    public function whereNot(array $where, string $compare = 'AND'): Model
+    {
+        return $this->where($where, '!=', $compare);
+    }
+
+    /**
      * Where In
      * @param string $column Required column name
      * @param array $values Required array of values to match
@@ -220,6 +270,21 @@ class Model
     }
 
     /**
+     * Where Not In
+     * @param string $column Required column name
+     * @param array $values Required array of values to match
+     * @param string $compare Optional comparison type (AND, OR)
+     * @return Model
+     */
+    public function whereNotIn(string $column, array $values, string $compare = 'AND'): Model
+    {
+        $column = call_user_func([new Quote($column, $this->driver), 'sql']);
+        $placeholders = implode(',', array_fill(0, count($values), '?'));
+        $this->addWhere("{$column} NOT IN ({$placeholders})", $values, $compare);
+        return $this;
+    }
+
+    /**
      * Check Column is Null
      * @param string $column Required column name
      * @param string $compare Optional comparison type (AND, OR)
@@ -231,6 +296,21 @@ class Model
         $column = call_user_func([new Quote($column, $this->driver), 'sql']);
 
         $this->addWhere("{$column} IS NULL", [], $compare);
+        return $this;
+    }
+
+    /**
+     * Check Column is Not Null
+     * @param string $column Required column name
+     * @param string $compare Optional comparison type (AND, OR)
+     * @return Model
+     */
+    public function notNull(string $column, string $compare = 'AND'): Model
+    {
+        // Quote String
+        $column = call_user_func([new Quote($column, $this->driver), 'sql']);
+
+        $this->addWhere("{$column} IS NOT NULL", [], $compare);
         return $this;
     }
 
@@ -345,6 +425,26 @@ class Model
     }
 
     /**
+     * Get Only Trashed Rows
+     * @return Model
+     */
+    public function onlyTrashed(): Model
+    {
+        $this->notNull($this->deletedAtColumn);
+        return $this;
+    }
+
+    /**
+     * Get Without Trashed Rows
+     * @return Model
+     */
+    public function notTrashed(): Model
+    {
+        $this->isNull($this->deletedAtColumn);
+        return $this;
+    }
+
+    /**
      * Get Result
      * @return array{} Returns the results as an array
      */
@@ -397,6 +497,39 @@ class Model
         return (int) ($result['count'] ?? 0);
     }
 
+
+    /**
+     * Get Single Column Values as Array
+     * @param string $column Column Name
+     * @return array
+     */
+    public function pluck(string $column): array
+    {
+        $results = $this->select($column)->get();
+        return array_column($results, $column);
+    }
+
+    /**
+     * Check if records exist
+     */
+    public function exists(): bool
+    {
+        return $this->count() > 0;
+    }
+
+    /**
+     * Get First or Fail
+     * @return array
+     */
+    public function firstOrFail(): array
+    {
+        $result = $this->first();
+        if (empty($result)) {
+            throw new \RuntimeException("No Records Found");
+        }
+        return $result;
+    }
+
     /**
      * Insert Row('s)
      * @param array{} $data Insert Row('s) Data. Example: ['name' => 'John', 'age' => 30] or [0 => ['name' => 'John'], ['name' => 'Doe']]
@@ -425,6 +558,9 @@ class Model
         $rowPlaceholders = '(' . implode(', ', array_fill(0, count($columns), '?')) . ')';
         $placeholders = implode(', ', array_fill(0, count($rows), $rowPlaceholders));
 
+        // Sanitize Table
+        $this->table = $this->sanitize($this->table);
+
         // Build SQL
         $sql = "INSERT INTO {$this->table} (" . implode(', ', $columns) . ") VALUES {$placeholders}";
 
@@ -446,7 +582,7 @@ class Model
             $stmt = $this->pdo->prepare($sql);
             $result = $stmt->execute($bindings);
         } catch (\Throwable $th) {
-            throw new \RuntimeException($th->getMessage());
+            throw new RuntimeException($th->getMessage());
         }
 
         // Reset builder state
@@ -463,6 +599,10 @@ class Model
      */
     public function chunk(int $size, callable $callback): void
     {
+        if ($size <= 0) {
+            throw new InvalidArgumentException("Chunk Size Must be Greater Than 0, Got: [{$size}]");
+        }
+
         $offset = 0;
 
         while (true) {
@@ -508,6 +648,10 @@ class Model
             $set[] = "{$column} = ?";
         }
 
+        // Sanitize Table
+        $this->table = $this->sanitize($this->table);
+
+        // Make SQL
         $sql = "UPDATE {$this->table} SET " . implode(', ', $set);
 
         if (!empty($this->joins)) {
@@ -532,17 +676,38 @@ class Model
     }
 
     /**
-     * Delete Clause
+     * Enable Soft Delete
+     * @param bool $enable Default is true
+     * @return Model
+     */
+    public function soft(bool $enable = true): Model
+    {
+        $this->softDelete = $enable;
+        return $this;
+    }
+
+    /**
+     * Delete Row(s)
      * @return int Returns the number of affected rows
      */
     public function delete(): int
     {
-        $sql = "DELETE FROM {$this->table}";
+        // Check Where Clause Exists
         if (empty($this->wheres)) {
             throw new InvalidArgumentException("No WHERE Clause provided for DELETE operation.");
         }
 
-        $sql .= " WHERE " . implode(' AND ', $this->wheres);
+        if ($this->softDelete) {
+            return $this->update([$this->deletedAtColumn => date('Y-m-d H:i:s')]);
+        }
+
+        // Sanitize Table
+        $this->table = $this->sanitize($this->table);
+
+        // Make SQL
+        $sql = "DELETE FROM {$this->table}";
+
+        $sql .= " WHERE " . implode(' ', $this->wheres);
 
         // Add Queries to Log
         Log::add($sql, $this->connection);
@@ -555,6 +720,43 @@ class Model
         $rowcount = $stmt->rowCount();
         $this->reset();
         return $rowcount;
+    }
+
+    /**
+     * Restore Row(s)
+     * @return int Returns the number of affected rows
+     */
+    public function restore(): int
+    {
+        // Check Where Clause Exists
+        if (empty($this->wheres)) {
+            throw new InvalidArgumentException("No WHERE Clause provided for Restore operation.");
+        }
+
+        return $this->update([$this->deletedAtColumn => null]);
+    }
+
+    /**
+     * Execute Raw Query With Automatic Return Type Detection
+     * @param string $sql Raw SQL query
+     * @param ?array $bindings Parameter bindings
+     * @return array|int Returns array of rows for SELECT, affected rows for INSERT/UPDATE/DELETE
+     */
+    public function raw(string $sql, ?array $bindings = null): array|int
+    {
+        Log::add($sql, $this->connection);
+        
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($bindings);
+        
+        // Detect query type from SQL
+        $queryType = strtoupper(trim(explode(' ', $sql)[0]));
+        
+        return match($queryType) {
+            'SELECT', 'SHOW', 'DESCRIBE', 'EXPLAIN' => $stmt->fetchAll(),
+            'INSERT', 'UPDATE', 'DELETE' => $stmt->rowCount(),
+            default => $stmt->rowCount() // For CREATE, ALTER, DROP, etc.
+        };
     }
 
     /**
@@ -586,6 +788,10 @@ class Model
         if (empty($this->table)) {
             throw new InvalidArgumentException("Table Name Doesn't Exists.");
         }
+
+        // Sanitize Table
+        $this->table = $this->sanitize($this->table);
+
         $sql = "SELECT {$this->columns} FROM {$this->table} LIMIT 1";
         $stmt = $this->pdo->query($sql);
         $meta = [];
@@ -634,31 +840,28 @@ class Model
     /**
      * Generate UUID
      * @param string $prefix UUID Prefix. Example: 'uuid'
+     * @param int $maxAttempts Maximum Try if UUID Already Exists
      * @return string
+     * @throws RuntimeException
      */
-    public function uuid(string $prefix = 'uuid'): string
+    public function uuid(string $prefix = 'uuid', int $maxAttempts = 10): string
     {
-        // Set Prefix
         $prefix = empty($prefix) ? 'uuid' : strtolower($prefix);
-
-        // Get Random Number From Microtime
-        $time = substr(str_replace('.', '', (string) microtime(true)), -6);
-
-        // Make Random Bytes
-        $str1 = bin2hex(random_bytes(3));
-        $str2 = bin2hex(random_bytes(3));
-        $str3 = bin2hex(random_bytes(3));
-        $str4 = bin2hex(random_bytes(3));
-
-        // Make UUID
-        $uuid = "{$prefix}-{$str1}-{$str2}-{$str3}-{$str4}-{$time}";
-
-        // Check Already Exist & Return
-        if ($this->select($this->uuid)->where([$this->uuid => $uuid])->first()) {
-            return $this->uuid();
+        
+        for ($attempt = 0; $attempt < $maxAttempts; $attempt++) {
+            $time = substr(str_replace('.', '', (string) microtime(true)), -6);
+            $str1 = bin2hex(random_bytes(3));
+            $str2 = bin2hex(random_bytes(3));
+            $str3 = bin2hex(random_bytes(3));
+            $str4 = bin2hex(random_bytes(3));
+            $uuid = "{$prefix}-{$str1}-{$str2}-{$str3}-{$str4}-{$time}";
+            
+            if (!$this->select($this->uuid)->where([$this->uuid => $uuid])->first()) {
+                return $uuid;
+            }
         }
-
-        return $uuid;
+        
+        throw new \RuntimeException("Failed to Generate Unique UUID After [{$maxAttempts}] Attempts");
     }
 
     ####################################################################
@@ -688,6 +891,9 @@ class Model
         if (empty($this->table)) {
             throw new PDOException("Table Name Not Found!");
         }
+
+        // Sanitize Table
+        $this->table = $this->sanitize($this->table);
 
         $sql = "SELECT {$this->columns} FROM {$this->table}";
 
@@ -738,6 +944,15 @@ class Model
         $this->offset   =   null;
         $this->having   =   [];
     }
+
+    /**
+     * Add Table Sanitization in Model Class
+     */
+    protected function sanitize(string $identifier): string
+    {
+        // Remove dangerous characters
+        return preg_replace('/[^a-zA-Z0-9_]/', '', $identifier);
+}
 
     /**
      * Prevent Cloning

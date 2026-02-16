@@ -44,11 +44,9 @@ class Blueprint extends BaseBlueprint
         
         // Lock Blueprint
         $this->locked = true;
-        
-        // Store SQL's
-        $table = call_user_func([new Quote($this->table, $this->driver), 'sql']);
 
         // Create Table SQL
+        $table = call_user_func([new Quote($this->table, $this->driver), 'sql']);
         $this->sqls[] = sprintf(
             "CREATE TABLE IF NOT EXISTS {$table} (\n    %s\n)%s%s%s",
             implode(",\n    ", $this->columns),
@@ -73,11 +71,41 @@ class Blueprint extends BaseBlueprint
     }
 
     /**
-     * Alter Table SQL Query
+     * Add Column from Table
      * @return string
      */
-    public function alter(): void
+    public function addColumn(): void
     {
+        if ($this->locked) {
+            throw new LogicException("SQL Already Generated for This Blueprint.");
+        }
+        
+        if (empty($this->columns)) {
+            throw new LogicException("No Columns Defined for ALTER TABLE [{$this->table}]");
+        }
+        
+        $this->locked = true;
+        
+        // Generate ALTER TABLE Statement for Add Column
+        $table = call_user_func([new Quote($this->table, $this->driver), 'sql']);
+
+        array_map(function ($col) use($table) {
+            $this->sqls[] = "ALTER TABLE {$table} ADD {$col};";
+        }, $this->columns);
+
+        // Compile Indexes
+        array_map(function ($col) {
+            $keys = $col->getKey();
+            $constraint = $col->constraint();
+            // Add Keys
+            if (!empty($keys)) {
+                $this->sqls[] = $keys;
+            }
+            // Add Constraint
+            if (!empty($constraint)) {
+                $this->sqls[] = $constraint;
+            }
+        }, $this->columns);
         return;
     }
 }
