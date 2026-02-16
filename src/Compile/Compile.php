@@ -13,9 +13,8 @@ declare(strict_types=1);
 
 namespace Laika\Model\Compile;
 
-use LogicException;
-use RuntimeException;
 use Laika\Model\Abstracts\BuilderHelper;
+use Laika\Model\Exceptions\CompileException;
 
 class Compile
 {
@@ -33,12 +32,12 @@ class Compile
         $builder = "\\Laika\\Model\\Compile\\{$builder}";
 
         if (!class_exists($builder)) {
-            throw new RuntimeException("Builder Class [{$builder}] Not Found", 10120);
+            throw new CompileException("Builder Class [{$builder}] Not Found", 10120);
         }
 
         $instance = new $builder(...$params);
         if (!$instance instanceof BuilderHelper) {
-            throw new LogicException("Builder Class [{$builder}] Must Extend BuilderHelper", 10120);
+            throw new CompileException("Builder Class [{$builder}] Must Extend BuilderHelper", 10120);
         }
 
         return $instance;

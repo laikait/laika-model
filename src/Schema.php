@@ -17,6 +17,9 @@ use PDO;
 use Throwable;
 use PDOException;
 use Laika\Model\Compile\Drop;
+use Laika\Model\Compile\Quote;
+use Laika\Model\Compile\Rename;
+use Laika\Model\Compile\Columns;
 
 class Schema
 {
@@ -70,6 +73,7 @@ class Schema
         $this->driver = Connection::driver($this->connection);
     }
 
+    /*============================== PUBLIC API ==============================*/
     /**
      * Set Table
      * @param string $table Table Name. Example: 'user'
@@ -91,29 +95,47 @@ class Schema
      */
     public function create(callable $callback): self
     {
-        $blueprint = new Blueprint($this->table, $this->driver);
-
-        $callback($blueprint);
-
-        $blueprint->create();
-        $this->sqls = $blueprint->sqls();
+        try {
+            $blueprint = new Blueprint($this->table, $this->driver);
+            $callback($blueprint);
+            $blueprint->create();
+            $this->sqls = $blueprint->sqls();
+        } catch (\Throwable $th) {
+            throw new Exceptions\SchemaException($th->getMessage());
+        };
         return $this;
     }
 
     /**
-     * Alter Table Sql Query
+     * Add Column to Table
      * @param string $table Required Argument
      * @param callable $callback Callback With Blueprint. Example function(Blueprint $table){.....}
      * @return self
      */
-    public function alter(callable $callback): self
+    public function addColumn(callable $callback): self
     {
-        $blueprint = new Blueprint($this->table, $this->driver);
+        try {
+            $blueprint = new Blueprint($this->table, $this->driver);
+            $callback($blueprint);
+            $blueprint->addColumn();
+            $this->sqls = $blueprint->sqls();
+        } catch (\Throwable $th) {
+            throw new Exceptions\SchemaException($th->getMessage());
+        }
+        return $this;
+    }
 
-        $callback($blueprint);
-
-        $blueprint->alter();
-        $this->sqls = $blueprint->sqls();
+    /**
+     * Delete Column From Table
+     * @param string $table Required Argument
+     * @param callable $callback Callback With Blueprint. Example function(Blueprint $table){.....}
+     * @return self
+     */
+    public function dropColumn(string $column): self
+    {
+        $column = call_user_func([new Quote($this->sanitize($column), $this->driver), 'sql']);
+        $table = call_user_func([new Quote($this->table, $this->driver), 'sql']);
+        $this->sqls[] = "ALTER TABLE {$table} DROP {$column};";
         return $this;
     }
 
@@ -125,21 +147,120 @@ class Schema
     public function drop(): self
     {
         $this->sqls[] = call_user_func([new Drop($this->table, $this->driver), 'sql']);
-
-        // $stmt = $this->pdo->prepare($sql);
-
-        // $stmt->execute();
         return $this;
     }
 
     /**
-     * Sanitize Name
-     * @param string $table Table/Column Name. Example: 'user'
-     * @return string
+     * Truncate Table
+     * @return self
      */
-    private function sanitize(string $name): string
+    public function truncate(): self
     {
-        return preg_replace('/[^a-zA-Z0-9_]/', '', $name);
+        $sql = match($this->driver) {
+            'mysql' => "TRUNCATE TABLE {$this->table};",
+            'pgsql' => "TRUNCATE TABLE {$this->table} RESTART IDENTITY CASCADE;",
+            'sqlite' => "DELETE FROM {$this->table}; DELETE FROM sqlite_sequence WHERE name='{$this->table}';",
+            default => "DELETE FROM {$this->table}"
+        };
+        
+        $this->sqls[] = $sql;
+        return $this;
+    }
+
+    /**
+     * Rename Table
+     * @param string $name New Table Name
+     * @return self
+     */
+    public function rename(string $name): self
+    {
+        $name = $this->sanitize($name);
+        $this->sqls[] = call_user_func([new Rename($this->driver, $this->table, $name), 'sql']);
+
+        return $this;
+    }
+
+    /**
+     * Run Multiple Schema Operations Safely
+     * @param callable $callable Any Callable
+     * @return void
+     */
+    public static function batch(callable $callback): void
+    {
+        $callback();
+    }
+
+    /**
+     * Get All Tables in Database
+     * @return array
+     */
+    public static function tables(string $connection = 'default'): array
+    {
+        $pdo = Connection::get($connection);
+        $driver = Connection::driver($connection);
+        
+        $sql = match($driver) {
+            'mysql' => "SHOW TABLES",
+            'pgsql' => "SELECT tablename FROM pg_tables WHERE schemaname = 'public'",
+            'sqlite' => "SELECT name FROM sqlite_master WHERE type='table'",
+            default => throw new PDOException("Unsupported Driver: [{$driver}]")
+        };
+        
+        $stmt = $pdo->query($sql);
+        $tables = $stmt->fetchAll(PDO::FETCH_COLUMN);
+        
+        return $tables;
+    }
+
+    /**
+     * Check if Column Exists in Table
+     * @return bool
+     */
+    public function hasColumn(string $column): bool
+    {
+        $columns = $this->columns();
+        
+        foreach ($columns as $col) {
+            $fieldName = match($this->driver) {
+                'mysql' => $col['Field'] ?? '',
+                'pgsql' => $col['column_name'] ?? '',
+                'sqlite' => $col['name'] ?? '',
+                default => ''
+            };
+            
+            if ($fieldName === $column) {
+                return true;
+            }
+        }
+        
+        return false;
+    }
+
+    /**
+     * Get Columns Information for Table
+     * @return array
+     */
+    public function columns(): array
+    {
+        $sql = (new Columns($this->driver, $this->table))->sql();
+
+        $stmt = $this->pdo->query($sql);
+        
+        return $stmt->fetchAll();
+    }
+
+    /**
+     * Preview Table Structure Without Executing
+     * @param callable $callback Callback With Blueprint. Example function(Blueprint $table){.....}
+     * @return array
+     */
+    public function preview(callable $callback): array
+    {
+        $blueprint = new Blueprint($this->table, $this->driver);
+        $callback($blueprint);
+        $blueprint->create();
+        
+        return $blueprint->sqls();
     }
 
     /**
@@ -148,18 +269,31 @@ class Schema
      */
     public function execute(): string
     {
-        // Set Queries
-        Log::add($this->sqls, $this->connection);
-
-        // Execute SQL
+        if (empty($this->sqls)) {
+            throw new \InvalidArgumentException("No SQL Queries to Execute");
+        }
+        
         try {
             foreach ($this->sqls as $sql) {
+                Log::add($sql, $this->connection);
                 $stmt = $this->pdo->prepare($sql);
                 $stmt->execute();
-            };
+            }            
         } catch (Throwable $th) {
-            throw new PDOException("Error in Query: [{$sql}]", 10100, $th);
+            throw new Exceptions\SchemaException("Schema Execution Failed: [{$sql}]. Error: {$th->getMessage()}");
         }
+        
         return implode("\n", $this->sqls);
+    }
+
+    /*============================== INTERNAL API ==============================*/
+    /**
+     * Sanitize Name
+     * @param string $table Table/Column Name. Example: 'user'
+     * @return string
+     */
+    private function sanitize(string $name): string
+    {
+        return preg_replace('/[^a-zA-Z0-9_]/', '', $name);
     }
 }

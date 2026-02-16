@@ -14,10 +14,12 @@ declare(strict_types=1);
 namespace Laika\Model\Abstracts;
 
 use LogicException;
+use Laika\Model\Compile\Quote;
 use Laika\Model\Compile\Engine;
 use Laika\Model\Compile\Charset;
 use Laika\Model\Compile\Collate;
-use Laika\Model\Blueprint\Column;
+use Laika\Model\Blueprint\AddColumn;
+use Laika\Model\Blueprint\CreateColumn;
 
 abstract class BaseBlueprint
 {
@@ -83,7 +85,7 @@ abstract class BaseBlueprint
      */
     public function __construct(string $table, string $drive)
     {
-        $this->table = $table;
+        $this->table = $this->sanitize($table);
         $this->driver = $drive;
     }
 
@@ -123,15 +125,15 @@ abstract class BaseBlueprint
 
     /**
      * Create Column
-     * @return Column
+     * @return CreateColumn
      */
-    public function column(string $name): Column
+    public function column(string $name): CreateColumn
     {
         if ($this->locked) {
-            throw new LogicException('Blueprint is locked. No further mutation allowed.');
+            throw new LogicException('Blueprint is locked.');
         }
 
-        $column = new Column($name, $this->driver, $this->table);
+        $column = new CreateColumn($this->sanitize($name), $this->driver, $this->table);
 
         // Detect primary key intent
         if (method_exists($column, 'isPrimary') && $column->isPrimary()) {
@@ -161,13 +163,6 @@ abstract class BaseBlueprint
      */
     abstract public function create(): void;
 
-    /**
-     * Abstract Method
-     * Alter SQL Query
-     * @return void
-     */
-    abstract public function alter(): void;
-
     #######################################################################
     /*--------------------------- INTERNAL API ---------------------------*/
     #######################################################################
@@ -184,5 +179,15 @@ abstract class BaseBlueprint
     protected function compileCollation(): string
     {
         return call_user_func([new Collate($this->collation, $this->driver), 'sql']);
-    }    
+    }
+    
+    /**
+     * Sanitize Name
+     * @param string $table Table/Column Name. Example: 'user'
+     * @return string
+     */
+    private function sanitize(string $name): string
+    {
+        return preg_replace('/[^a-zA-Z0-9_]/', '', $name);
+    }
 }

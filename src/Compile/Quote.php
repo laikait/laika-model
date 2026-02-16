@@ -37,15 +37,15 @@ class Quote extends BuilderHelper
                 break;
 
             case 'pgsql':
-                $this->query = $string;
+                $this->query = "\"{$string}\"";
                 break;
 
             case 'sqlite':
-                $this->query = $string;
+                $this->query = "\"{$string}\"";
                 break;
 
             case 'sqlsrv':
-                $this->query = $string;
+                $this->query = "[{$string}]";
                 break;
 
             default:
