@@ -141,33 +141,6 @@ class Model
     }
 
     /**
-     * Get Table Name
-     * @return string
-     */
-    public function getTable(): string
-    {
-        return $this->sanitize($this->table);
-    }
-
-    /**
-     * Get ID Column Name
-     * @return string
-     */
-    public function getId(): string
-    {
-        return $this->id;
-    }
-
-    /**
-     * Get UUID Column Name
-     * @return string
-     */
-    public function getUid(): string
-    {
-        return $this->uuid;
-    }
-
-    /**
      * Select
      * @param ?string $columns Column names. Default is null
      * @return Model
@@ -943,6 +916,7 @@ class Model
         $this->limit    =   null;
         $this->offset   =   null;
         $this->having   =   [];
+        $this->softDelete = false;
     }
 
     /**
@@ -970,5 +944,15 @@ class Model
     public function __wakeup()
     {
         throw new Exception('Unserializing is not allowed.');
+    }
+
+    public function __isset($prop): bool
+    {
+        return isset($this->$prop);
+    }
+
+    public function __get($prop)
+    {
+        return $this->$prop;
     }
 }
