@@ -13,7 +13,6 @@ declare(strict_types=1);
 
 namespace Laika\Model;
 
-use InvalidArgumentException;
 use PDO;
 
 class Config
@@ -45,11 +44,11 @@ class Config
     {
         // Check Host Key Exists
         if (empty($config['host'])) {
-            throw new InvalidArgumentException('[host] Key Not Found in Config!');
+            throw new \InvalidArgumentException('[host] Key Not Found in Config!');
         }
         // Check Driver Key Exists
         if (empty($config['driver'])) {
-            throw new InvalidArgumentException('[driver] Key Not Found in Config!');
+            throw new \InvalidArgumentException('[driver] Key Not Found in Config!');
         }
         $this->config = $config;
         $this->pdo = $this->create();
@@ -81,14 +80,18 @@ class Config
     {
         $this->driver = $this->config['driver'];
 
+        if (!extension_loaded('pdo')) {
+            throw new \RuntimeException("Extension Not Loaded: [pdo]");
+        }
+
         if (empty($this->driver)) {
-            throw new InvalidArgumentException("PDO Driver Name Should Not Be Empty: '{$this->driver}'.");
+            throw new \InvalidArgumentException("PDO Driver Name Should Not Be Empty: '{$this->driver}'.");
         }
 
         $class = __NAMESPACE__ . '\\Driver\\' . ucfirst($this->driver);
 
         if (!class_exists($class)) {
-            throw new InvalidArgumentException("Invalid PDO Driver Detected: [{$this->driver}]");
+            throw new \InvalidArgumentException("Invalid PDO Driver Detected: [{$this->driver}]");
         }
 
         $obj = new $class($this->config);
