@@ -22,29 +22,30 @@ composer require laikait/laika-model
 ```
 ##  Connection Manager
 Configure your database settings in your PHP application page top section.
-To config use <b>ConnectionManager::add(array $config, string $name = 'default')</b>.
-Array $config:
-    * 'driver'  => [Required]: Accepted mysql/pgsql/sqlite. Example: mysql
-    * 'host'    => [Optional]: localhost/127.0.0.1 || [Required]: If Foreign. Example: otherhost
-    * 'port'    => [Optional]: 3306 || [Required]: If Port is Not 3306
-    * 'database'=> [Required]: Your Database Name. Example: 'dbname'
-    * 'username'=> [Required]: Your Database Username. Example: 'db_username'
-    * 'password'=> [Required]: Your Database Password. Example: 'db_password'
-
-String $name: Default is 'default'. Has Read & Write Access
+To config use:
 
 ```php
 use Laika\Model\Connection;
 
 // Require Autoload File
 require_once("./vendor/autoload.php");
+
+$default_config = [
+    'driver' => 'mysql', // Required
+    'host' => 'localhost', // Required
+    'port' => 3306 // Optional
+    'database' => 'your_db_name', // Required
+    'username' => 'db_username', // Required
+    'password' => 'db_password' // Required
+];
+
 // Add Default Connection Manager
-Connection::add(array $config); // DB Default Connection Details for Read & Write both
+Connection::add(array $default_config); // DB Default Connection Details for Read & Write both
 
 /**
  * Add Multiple Connection Manager. Default is for read, write or foreign
  */
-Connection::add(array $config, 'other'); // DB Another Connection for Read & Write. Local or Foreign
+Connection::add(array $other_config, 'other'); // DB Another Connection for Read & Write. Local or Foreign
 Connection::add(array $ReadDbConfig, 'read'); // DB Connection Details for Read
 Connection::add(array $WriteDbConfig, 'write'); // DB Connection Details for Write
 ```
