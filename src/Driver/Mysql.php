@@ -13,50 +13,55 @@ declare(strict_types=1);
 
 namespace Laika\Model\Driver;
 
-use InvalidArgumentException;
 use Laika\Model\Abstracts\DriverBlueprint;
 
 class Mysql extends DriverBlueprint
 {
     /**
-     * Database Host
      * @var string $host
      */
     private string $host;
 
     /**
-     * Database Port
      * @var int $port
      */
     private int $port;
 
     /**
-     * Database Name
      * @var string $database
      */
     private string $database;
 
     /**
-     * Database Charset
      * @var string $charset
      */
     private string $charset;
 
 
     /**
-     * @param array{host?:string,port?:string|int,database:string,charset?:string} $config
+     * @param array{host:string,database:string,port?:string|int,charset?:string} $config
      */
     public function __construct(array $config)
     {
-        // Check Database Name Key Exists
-        if (empty($config['database'])) {
-            throw new InvalidArgumentException('[database] Key Not Found in Config!');
+        // Check Extension Loaded
+        if (!extension_loaded('pdo_mysql')) {
+            throw new \RuntimeException("Extension Not Loaded: [pdo_mysql]");
         }
 
-        $this->host = $config['host'] ?? 'localhost';
+        $this->host = trim($config['host'] ?? '');
+        $this->database = trim($config['database'] ?? '');
         $this->port = (int) ($config['port'] ?? 3306);
-        $this->database = $config['database'];
-        $this->charset = $config['charset'] ?? 'utf8mb4';
+        $this->charset = trim($config['charset'] ?? 'utf8mb4');
+
+        // Check Host Key Exists
+        if (empty($this->host)) {
+            throw new \InvalidArgumentException('[host] Key Not Found or Empty!');
+        }
+
+        // Check Database Key Exists
+        if (empty($this->database)) {
+            throw new \InvalidArgumentException('[database] Key Not Found or Empty!');
+        }
     }
 
     public function dsn(): string
