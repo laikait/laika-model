@@ -43,7 +43,7 @@ $default_config = [
 Connection::add(array $default_config); // DB Default Connection Details for Read & Write both
 
 /**
- * Add Multiple Connection Manager. Default is for read, write or foreign
+ * Add Multiple Connection Manager.
  */
 Connection::add(array $other_config, 'other'); // DB Another Connection for Read & Write. Local or Foreign
 Connection::add(array $ReadDbConfig, 'read'); // DB Connection Details for Read
