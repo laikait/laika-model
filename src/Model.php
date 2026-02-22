@@ -83,14 +83,14 @@ class Model
     protected string $table;
 
     /**
-     * @var string $uuid UUID Column Name
+     * @var string $id ID Column Name
      */
     protected string $id = 'id';
 
     /**
-     * @var string $uuid UUID Column Name
+     * @var string $uid UID Column Name
      */
-    protected string $uuid = 'uuid';
+    protected string $uid = 'uid';
 
     /**
      * @var bool $softDelete
@@ -771,30 +771,31 @@ class Model
     }
 
     /**
-     * Generate UUID
-     * @param string $prefix UUID Prefix. Example: 'uuid'
-     * @param int $maxAttempts Maximum Try if UUID Already Exists
+     * Generate UID
+     * @param string $prefix UID Prefix. Example: 'UID'
+     * @param int $maxAttempts Maximum Try if UID Already Exists
      * @return string
      * @throws \RuntimeException
      */
-    public function uuid(string $prefix = 'uuid', int $maxAttempts = 10): string
+    public function uid(string $prefix = 'uid', int $maxAttempts = 10): string
     {
-        $prefix = empty($prefix) ? 'uuid' : strtolower($prefix);
+        $prefix = empty($prefix) ? 'uid' : strtolower($prefix);
         
         for ($attempt = 0; $attempt < $maxAttempts; $attempt++) {
             $time = substr(str_replace('.', '', (string) microtime(true)), -6);
-            $str1 = bin2hex(random_bytes(3));
+            $bytes = mt_rand(3,4);
+            $str1 = bin2hex(random_bytes($bytes));
             $str2 = bin2hex(random_bytes(3));
-            $str3 = bin2hex(random_bytes(3));
+            $str3 = bin2hex(random_bytes($bytes));
             $str4 = bin2hex(random_bytes(3));
-            $uuid = "{$prefix}-{$str1}-{$str2}-{$str3}-{$str4}-{$time}";
+            $uid = "{$prefix}-{$str1}-{$str2}-{$str3}-{$str4}-{$time}";
             
-            if (!$this->select($this->uuid)->where([$this->uuid => $uuid])->first()) {
-                return $uuid;
+            if (!$this->select($this->uid)->where([$this->uid => $uid])->first()) {
+                return $uid;
             }
         }
         
-        throw new \RuntimeException("Failed to Generate Unique UUID After [{$maxAttempts}] Attempts");
+        throw new \RuntimeException("Failed to Generate Unique UID After [{$maxAttempts}] Attempts");
     }
 
     ####################################################################
