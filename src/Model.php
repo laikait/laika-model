@@ -398,10 +398,10 @@ class Model
     }
 
     /**
-     * Get Only Trashed Rows
+     * Get With Trashed Rows
      * @return Model
      */
-    public function onlyTrashed(): Model
+    public function withTrash(): Model
     {
         $this->notNull($this->deletedAtColumn);
         return $this;
@@ -411,7 +411,7 @@ class Model
      * Get Without Trashed Rows
      * @return Model
      */
-    public function notTrashed(): Model
+    public function withoutTrash(): Model
     {
         $this->isNull($this->deletedAtColumn);
         return $this;
