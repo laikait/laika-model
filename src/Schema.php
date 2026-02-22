@@ -250,6 +250,31 @@ class Schema
     }
 
     /**
+     * Get Meta
+     * @throws InvalidArgumentException Throws an exception if the table name is not set
+     * @return array{} Returns the results as an array
+     */
+    public function meta(): array
+    {
+        if (empty($this->table)) {
+            throw new \InvalidArgumentException("Table Name Doesn't Exists.");
+        }
+
+        // Sanitize Table
+        $this->table = $this->sanitize($this->table);
+
+        $sql = "SELECT * FROM {$this->table} LIMIT 1";
+        $stmt = $this->pdo->query($sql);
+        $meta = [];
+        $count = $stmt->columnCount();
+
+        for ($i = 0; $i < $count; $i++) {
+            $meta[] = $stmt->getColumnMeta($i);
+        }
+        return $meta;
+    }
+
+    /**
      * Preview Table Structure Without Executing
      * @param callable $callback Callback With Blueprint. Example function(Blueprint $table){.....}
      * @return array
