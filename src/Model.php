@@ -13,20 +13,14 @@ declare(strict_types=1);
 
 namespace Laika\Model;
 
-use PDO;
-use Exception;
-use Throwable;
-use PDOException;
-use InvalidArgumentException;
-use Laika\Model\Compile\Quote;
-use RuntimeException;
+use Laika\Model\Exceptions\ModelException;
 
 class Model
 {
     /**
-     * @var PDO $pdo PDO Database Connection Object
+     * @var \PDO $pdo PDO Database Connection Object
      */
-    protected PDO $pdo;
+    protected \PDO $pdo;
 
     /**
      * @var string $driver Database Driver (mysql, sqlite, pgsql, sqlsrv, oci, firebird.)
@@ -89,14 +83,14 @@ class Model
     protected string $table;
 
     /**
-     * @var string $uuid UUID Column Name
+     * @var string $id ID Column Name
      */
     protected string $id = 'id';
 
     /**
-     * @var string $uuid UUID Column Name
+     * @var string $uid UID Column Name
      */
-    protected string $uuid = 'uuid';
+    protected string $uid = 'uid';
 
     /**
      * @var bool $softDelete
@@ -121,9 +115,9 @@ class Model
 
     /**
      * Get PDO Object
-     * @return PDO
+     * @return \PDO
      */
-    public function pdo(): PDO
+    public function pdo(): \PDO
     {
         return $this->pdo;
     }
@@ -156,7 +150,7 @@ class Model
         // Trim & Quote Columns
         $trimed = array_map(function($v) {
             $v = trim($v);
-            return call_user_func([new Quote($v, $this->driver), 'sql']);
+            return $this->quoteIdentifier($v);
         }, $array);
         $this->columns = implode(',', $trimed);
         return $this;
@@ -185,12 +179,12 @@ class Model
     {
         $type = strtoupper($type);
         // Quote String
-        $table = call_user_func([new Quote($table, $this->driver), 'sql']);
-        $first = call_user_func([new Quote($first, $this->driver), 'sql']);
-        $second = call_user_func([new Quote($second, $this->driver), 'sql']);
+        $table = $this->quoteIdentifier($table);
+        $first = $this->quoteIdentifier($first);
+        $second = $this->quoteIdentifier($second);
 
         if (!in_array($type, ['LEFT', 'RIGHT', 'INNER'])) {
-            throw new InvalidArgumentException("Invalid join type: {$type}");
+            throw new \InvalidArgumentException("Invalid join type: {$type}");
         }
 
         $this->joins[] = "{$type} JOIN {$table} ON {$first} {$operator} {$second}";
@@ -208,7 +202,7 @@ class Model
     {
         foreach ($where as $col => $val) {
             // Quote String
-            $col = call_user_func([new Quote($col, $this->driver), 'sql']);
+            $col = $this->quoteIdentifier($col);
             $this->addWhere("{$col} {$operator} ?", [$val], $compare);
         }
         return $this;
@@ -235,7 +229,7 @@ class Model
     public function whereIn(string $column, array $values, string $compare = 'AND'): Model
     {
         // Quote String
-        $column = call_user_func([new Quote($column, $this->driver), 'sql']);
+        $column = $this->quoteIdentifier($column);
 
         $placeholders = implode(',', array_fill(0, count($values), '?'));
         $this->addWhere("{$column} IN ({$placeholders})", $values, $compare);
@@ -251,7 +245,7 @@ class Model
      */
     public function whereNotIn(string $column, array $values, string $compare = 'AND'): Model
     {
-        $column = call_user_func([new Quote($column, $this->driver), 'sql']);
+        $column = $this->quoteIdentifier($column);
         $placeholders = implode(',', array_fill(0, count($values), '?'));
         $this->addWhere("{$column} NOT IN ({$placeholders})", $values, $compare);
         return $this;
@@ -266,7 +260,7 @@ class Model
     public function isNull(string $column, string $compare = 'AND'): Model
     {
         // Quote String
-        $column = call_user_func([new Quote($column, $this->driver), 'sql']);
+        $column = $this->quoteIdentifier($column);
 
         $this->addWhere("{$column} IS NULL", [], $compare);
         return $this;
@@ -281,7 +275,7 @@ class Model
     public function notNull(string $column, string $compare = 'AND'): Model
     {
         // Quote String
-        $column = call_user_func([new Quote($column, $this->driver), 'sql']);
+        $column = $this->quoteIdentifier($column);
 
         $this->addWhere("{$column} IS NOT NULL", [], $compare);
         return $this;
@@ -298,7 +292,7 @@ class Model
     public function between(string $column, mixed $value1, mixed $value2, string $compare = 'AND'): Model
     {
         // Quote String
-        $column = call_user_func([new Quote($column, $this->driver), 'sql']);
+        $column = $this->quoteIdentifier($column);
 
         $this->addWhere("{$column} BETWEEN ? AND ?", [$value1, $value2], strtoupper($compare));
         return $this;
@@ -337,7 +331,7 @@ class Model
     {
         $this->groupBy = array_map(function($column){
             // Quote String
-            return call_user_func([new Quote($column, $this->driver), 'sql']);
+            return $this->quoteIdentifier($column);
         }, $columns);
         return $this;
     }
@@ -352,7 +346,7 @@ class Model
     public function having(string $column, string $operator, mixed $value): Model
     {
         // Quote String
-        $column = call_user_func([new Quote($column, $this->driver), 'sql']);
+        $column = $this->quoteIdentifier($column);
 
         $this->having[]     =   "{$column} {$operator} ?";
         $this->bindings[]   =   $value;
@@ -363,12 +357,19 @@ class Model
      * Order By Clause
      * @param string $column Required column name
      * @param string $direction Optional direction (ASC, DESC)
+     * @throws \InvalidArgumentException Throws an exception if an invalid direction is provided
      * @return Model
      */
     public function order(string $column, string $direction = 'ASC'): Model
     {
+        $direction = strtoupper($direction);
+        // Check Direction
+        // Edit Here =======================================
+        if (!in_array($direction, ['ASC', 'DESC'])) {
+            throw new \InvalidArgumentException("Invalid order direction: {$direction}");
+        }
         // Quote String
-        $column = call_user_func([new Quote($column, $this->driver), 'sql']);
+        $column = $this->quoteIdentifier($column);
 
         $this->orderBy[] = "{$column} {$direction}";
         return $this;
@@ -398,10 +399,10 @@ class Model
     }
 
     /**
-     * Get Only Trashed Rows
+     * Get With Trashed Rows
      * @return Model
      */
-    public function onlyTrashed(): Model
+    public function withTrash(): Model
     {
         $this->notNull($this->deletedAtColumn);
         return $this;
@@ -411,7 +412,7 @@ class Model
      * Get Without Trashed Rows
      * @return Model
      */
-    public function notTrashed(): Model
+    public function withoutTrash(): Model
     {
         $this->isNull($this->deletedAtColumn);
         return $this;
@@ -444,8 +445,8 @@ class Model
     public function first(): array
     {
         $this->limit(1);
-        $result =   $this->get();
-        $first  =   $result[0] ?? [];
+        $result = $this->get();
+        $first = $result[0] ?? [];
         return $first;
     }
 
@@ -492,6 +493,7 @@ class Model
 
     /**
      * Get First or Fail
+     * @throws \RuntimeException Throws an exception if no records are found
      * @return array
      */
     public function firstOrFail(): array
@@ -506,12 +508,13 @@ class Model
     /**
      * Insert Row('s)
      * @param array{} $data Insert Row('s) Data. Example: ['name' => 'John', 'age' => 30] or [0 => ['name' => 'John'], ['name' => 'Doe']]
+     * @throws \InvalidArgumentException|\RuntimeException
      * @return string|false Returns the last inserted ID
      */
     public function insert(array $data): string|false
     {
         if (empty($data)) {
-            throw new InvalidArgumentException('Cannot Insert Empty Rows.');
+            throw new \InvalidArgumentException('Cannot Insert Empty Rows.');
         }
 
         // Normalize input: detect single row vs multiple rows
@@ -524,7 +527,7 @@ class Model
 
         // Quote columns
         $columns = array_map(function ($column) {
-            return (new Quote($column, $this->driver))->sql();
+            return $this->quoteIdentifier($column);;
         }, $keys);
 
         // Build placeholders
@@ -545,7 +548,7 @@ class Model
         foreach ($rows as $row) {
             // Ensure row structure consistency
             if (array_keys($row) !== $keys) {
-                throw new InvalidArgumentException('All insert rows must have identical columns.');
+                throw new \InvalidArgumentException('All insert rows must have identical columns.');
             }
             $bindings = array_merge($bindings, array_values($row));
         }
@@ -555,7 +558,7 @@ class Model
             $stmt = $this->pdo->prepare($sql);
             $result = $stmt->execute($bindings);
         } catch (\Throwable $th) {
-            throw new RuntimeException($th->getMessage());
+            throw new \RuntimeException($th->getMessage());
         }
 
         // Reset builder state
@@ -568,12 +571,13 @@ class Model
      * Chunk the Results
      * @param int $size Chunk Size. Example: 100
      * @param callable $callback Callback function. Argument is an array of results. Example: function(array $rows) { ... }
+     * @throws \InvalidArgumentException Throws an exception if chunk size is invalid
      * @return void
      */
     public function chunk(int $size, callable $callback): void
     {
         if ($size <= 0) {
-            throw new InvalidArgumentException("Chunk Size Must be Greater Than 0, Got: [{$size}]");
+            throw new \InvalidArgumentException("Chunk Size Must be Greater Than 0, Got: [{$size}]");
         }
 
         $offset = 0;
@@ -608,16 +612,17 @@ class Model
     /**
      * Update Clause
      * @param array $data Required data to update
+     * @throws \InvalidArgumentException Throws an exception if no WHERE clause is provided for the update operation
      * @return int Returns the number of affected rows
      */
     public function update(array $data): int
     {
         if (empty($this->wheres)) {
-            throw new InvalidArgumentException("No WHERE Clause Provided for UPDATE operation.");
+            throw new \InvalidArgumentException("No WHERE Clause Provided for UPDATE operation.");
         }
         $set = [];
         foreach (array_keys($data) as $column) {
-            $column = call_user_func([new Quote($column, $this->driver), 'sql']);
+            $column = $this->quoteIdentifier($column);
             $set[] = "{$column} = ?";
         }
 
@@ -661,13 +666,14 @@ class Model
 
     /**
      * Delete Row(s)
+     * @throws \InvalidArgumentException Throws an exception if no WHERE clause is provided for the delete operation
      * @return int Returns the number of affected rows
      */
     public function delete(): int
     {
         // Check Where Clause Exists
         if (empty($this->wheres)) {
-            throw new InvalidArgumentException("No WHERE Clause provided for DELETE operation.");
+            throw new \InvalidArgumentException("No WHERE Clause provided for DELETE operation.");
         }
 
         if ($this->softDelete) {
@@ -697,13 +703,14 @@ class Model
 
     /**
      * Restore Row(s)
+     * @throws \InvalidArgumentException Throws an exception if no WHERE clause is provided for the restore operation
      * @return int Returns the number of affected rows
      */
     public function restore(): int
     {
         // Check Where Clause Exists
         if (empty($this->wheres)) {
-            throw new InvalidArgumentException("No WHERE Clause provided for Restore operation.");
+            throw new \InvalidArgumentException("No WHERE Clause provided for Restore operation.");
         }
 
         return $this->update([$this->deletedAtColumn => null]);
@@ -713,23 +720,15 @@ class Model
      * Execute Raw Query With Automatic Return Type Detection
      * @param string $sql Raw SQL query
      * @param ?array $bindings Parameter bindings
-     * @return array|int Returns array of rows for SELECT, affected rows for INSERT/UPDATE/DELETE
+     * @return \PDOStatement Returns array of rows for SELECT, affected rows for INSERT/UPDATE/DELETE
      */
-    public function raw(string $sql, ?array $bindings = null): array|int
+    public function execute(string $sql, ?array $bindings = null): \PDOStatement
     {
         Log::add($sql, $this->connection);
         
         $stmt = $this->pdo->prepare($sql);
         $stmt->execute($bindings);
-        
-        // Detect query type from SQL
-        $queryType = strtoupper(trim(explode(' ', $sql)[0]));
-        
-        return match($queryType) {
-            'SELECT', 'SHOW', 'DESCRIBE', 'EXPLAIN' => $stmt->fetchAll(),
-            'INSERT', 'UPDATE', 'DELETE' => $stmt->rowCount(),
-            default => $stmt->rowCount() // For CREATE, ALTER, DROP, etc.
-        };
+        return $stmt;
     }
 
     /**
@@ -753,48 +752,10 @@ class Model
     }
 
     /**
-     * Get Meta
-     * @return array{} Returns the results as an array
-     */
-    public function getMeta(): array
-    {
-        if (empty($this->table)) {
-            throw new InvalidArgumentException("Table Name Doesn't Exists.");
-        }
-
-        // Sanitize Table
-        $this->table = $this->sanitize($this->table);
-
-        $sql = "SELECT {$this->columns} FROM {$this->table} LIMIT 1";
-        $stmt = $this->pdo->query($sql);
-        $meta = [];
-        $count = $stmt->columnCount();
-
-        for ($i = 0; $i < $count; $i++) {
-            $meta[] = $stmt->getColumnMeta($i);
-        }
-
-        $this->reset();
-        return $meta;
-    }
-
-    /**
-     * Get Columns
-     * @return array{} Returns the results as an array
-     */
-    public function getColumns(): array
-    {
-        $meta = $this->getMeta();
-        return array_map(function($v){
-            return $v['name'];
-        }, $meta);
-    }
-
-    /**
      * Run a Transactional Callback
      * @param callable $callback Callback Function. Use Model as Argument. Example: function(Model $model) { ... }
      * @return mixed Returns the result of the callback
-     * @throws Throwable Rethrows any exception thrown within the callback
+     * @throws \RuntimeException Throws an exception if the transaction fails
      */
     public function transaction(callable $callback): mixed
     {
@@ -804,37 +765,37 @@ class Model
             $result = $callback($this);
             $this->pdo->commit();
             return $result;
-        } catch (Throwable $e) {
+        } catch (\Throwable $e) {
             $this->pdo->rollBack();
-            throw $e;
+            throw new \RuntimeException("Transaction Failed: " . $e->getMessage(), 0, $e);
         }
     }
 
     /**
-     * Generate UUID
-     * @param string $prefix UUID Prefix. Example: 'uuid'
-     * @param int $maxAttempts Maximum Try if UUID Already Exists
+     * Generate UID
+     * @param string $prefix UID Prefix. Example: 'UID'
+     * @param int $maxAttempts Maximum Try if UID Already Exists
      * @return string
-     * @throws RuntimeException
+     * @throws \RuntimeException
      */
-    public function uuid(string $prefix = 'uuid', int $maxAttempts = 10): string
+    public function uid(string $prefix = 'uid', int $maxAttempts = 10): string
     {
-        $prefix = empty($prefix) ? 'uuid' : strtolower($prefix);
+        $prefix = empty($prefix) ? 'uid' : strtolower($prefix);
         
         for ($attempt = 0; $attempt < $maxAttempts; $attempt++) {
             $time = substr(str_replace('.', '', (string) microtime(true)), -6);
-            $str1 = bin2hex(random_bytes(3));
-            $str2 = bin2hex(random_bytes(3));
-            $str3 = bin2hex(random_bytes(3));
-            $str4 = bin2hex(random_bytes(3));
-            $uuid = "{$prefix}-{$str1}-{$str2}-{$str3}-{$str4}-{$time}";
+            $str1 = bin2hex(random_bytes(mt_rand(3,4)));
+            $str2 = bin2hex(random_bytes(mt_rand(2,3)));
+            $str3 = bin2hex(random_bytes(mt_rand(3,4)));
+            $str4 = bin2hex(random_bytes(mt_rand(2,3)));
+            $uid = "{$prefix}-{$str1}-{$str2}-{$str3}-{$str4}-{$time}";
             
-            if (!$this->select($this->uuid)->where([$this->uuid => $uuid])->first()) {
-                return $uuid;
+            if (!$this->select($this->uid)->where([$this->uid => $uid])->first()) {
+                return $uid;
             }
         }
         
-        throw new \RuntimeException("Failed to Generate Unique UUID After [{$maxAttempts}] Attempts");
+        throw new \RuntimeException("Failed to Generate Unique UID After [{$maxAttempts}] Attempts");
     }
 
     ####################################################################
@@ -857,12 +818,13 @@ class Model
 
     /**
      * Build the SQL Query
+     * @throws \PDOException Throws an exception if the table name is not set
      * @return string Returns the built SQL query
      */
     private function build(): string
     {
         if (empty($this->table)) {
-            throw new PDOException("Table Name Not Found!");
+            throw new \PDOException("Table Name Not Found!");
         }
 
         // Sanitize Table
@@ -891,7 +853,7 @@ class Model
         }
 
         if ($this->limit !== null) {
-            $sql .= " LIMIT {$this->limit}";
+            $sql .= ($this->driver == 'sqlsrv') ? " SELECT TOP {$this->limit}" : " LIMIT {$this->limit}";
         }
 
         if ($this->offset !== null) {
@@ -926,32 +888,81 @@ class Model
     {
         // Remove dangerous characters
         return preg_replace('/[^a-zA-Z0-9_]/', '', $identifier);
-}
+    }
+
+    private function wrapIdent(string $name, string $driver): string
+    {
+        return match ($driver) {
+            'mysql', 'mariadb' => '`' . str_replace('`', '``', $name) . '`',
+            'sqlsrv'           => '[' . str_replace(']', ']]', $name) . ']',
+            default            => '"' . str_replace('"', '""', $name) . '"',
+        };
+    }
+
+    /**
+     * Validate and quote a column or table identifier for the current driver.
+     *
+     * Validation rule:  /^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)?$/
+     *   Allows: letters, digits, underscores, one optional dot (schema.table).
+     *   Rejects: spaces, quotes, dashes, SQL keywords with special chars, etc.
+     *
+     * Quoting per driver:
+     *   MySQL / MariaDB  →  `name`
+     *   SQL Server       →  [name]
+     *   All others       →  "name"  (ANSI SQL standard)
+     *
+     * @throws ModelException if the identifier fails validation.
+     */
+    public function quoteIdentifier(string $name): string
+    {
+        if (!preg_match('/^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)?$/', $name)) {
+            throw new ModelException(
+                "Invalid identifier [{$name}]. Only letters, digits and underscores are allowed."
+            );
+        }
+
+        if (str_contains($name, '.')) {
+            [$a, $b] = explode('.', $name, 2);
+            return $this->wrapIdent($a, $this->driver) . '.' . $this->wrapIdent($b, $this->driver);
+        }
+
+        return $this->wrapIdent($name, $this->driver);
+    }
 
     /**
      * Prevent Cloning
-     * @throws Exception Throws an exception if cloning is attempted
+     * @throws \Exception Throws an exception if cloning is attempted
      */
     private function __clone()
     {
-        throw new Exception('Cloning is not allowed.');
+        throw new \Exception('Cloning is Not Allowed.');
     }
 
     /**
      * Prevent Serialization
-     * @throws Exception Throws an exception if serialization is attempted
+     * @throws \Exception Throws an exception if serialization is attempted
      */
     public function __wakeup()
     {
-        throw new Exception('Unserializing is not allowed.');
+        throw new \Exception('Unserializing is Not Allowed.');
     }
 
+    /**
+     * Check if Property is Set
+     * @param string $prop Property Name
+     * @return bool
+     */
     public function __isset($prop): bool
     {
         return isset($this->$prop);
     }
 
-    public function __get($prop)
+    /**
+     * Get Property Value
+     * @param string $prop Property Name
+     * @return mixed
+     */
+    public function __get($prop): mixed
     {
         return $this->$prop;
     }
