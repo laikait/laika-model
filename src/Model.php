@@ -13,94 +13,63 @@ declare(strict_types=1);
 
 namespace Laika\Model;
 
-use Laika\Model\Compile\Quote;
+use Laika\Model\Exceptions\ModelException;
 
 class Model
 {
-    /**
-     * @var \PDO $pdo PDO Database Connection Object
-     */
+    /** @var \PDO PDO Database Connection Object*/
     protected \PDO $pdo;
 
-    /**
-     * @var string $driver Database Driver (mysql, sqlite, pgsql, sqlsrv, oci, firebird.)
-     */
+    /** @var string Database Driver (mysql, sqlite, pgsql, sqlsrv, oci, firebird.) */
     protected string $driver;
 
-    /**
-     * @var string $columns Selected Columns
-     */
+    /** @var string Selected Columns */
     protected string $columns = '*';
 
-    /**
-     * @var array $joins Join Clauses
-     */
+    /** @var array Join Clauses */
     protected array $joins = [];
 
-    /**
-     * @var array $wheres Where Clauses
-     */
+    /** @var array Where Clauses */
     protected array $wheres = [];
 
-    /**
-     * @var array $bindings Query Bindings
-     */
+    /** @var array Query Bindings */
     protected array $bindings = [];
 
-    /**
-     * @var array $groupBy Group By Clauses
-     */
+    /** @var array $groupBy Group By Clauses */
     protected array $groupBy = [];
 
-    /**
-     * @var array $orderBy Order By Clauses
-     */
+    /** @var array $orderBy Order By Clauses */
     protected array $orderBy = [];
 
-    /**
-     * @var ?int $limit Limit Clause
-     */
+    /** @var ?int $limit Limit Clause */
     protected ?int $limit = null;
 
-    /**
-     * @var ?int $offset Offset Clause
-     */
-    protected ?int $offset = null;
-
-    /**
-     * @var array $having Having Clauses
-     */
+    /** @var array $having Having Clauses */
     protected array $having = [];
 
-    /**
-     * @var string $connection Connection Name
-     */
+    /** @var string $connection Connection Name */
     protected string $connection;
 
-    /**
-     * @var string $table Table Name
-     */
+    /** @var string $table Table Name */
     protected string $table;
 
-    /**
-     * @var string $id ID Column Name
-     */
+    /** @var string $id ID Column Name */
     protected string $id = 'id';
 
-    /**
-     * @var string $uid UID Column Name
-     */
+    /** @var string $uid UID Column Name */
     protected string $uid = 'uid';
 
-    /**
-     * @var bool $softDelete
-     */
+    /** @var bool $softDelete */
     protected bool $softDelete = false;
 
-    /**
-     * @var string $deletedAtColumn
-     */
+    /** @var string $deletedAtColumn */
     protected string $deletedAtColumn = 'deleted_at';
+
+    /** @var array<string,string> Casts. Example: ['column1' => 'int', 'column2' => 'string', [.....]] */
+    protected array $casts = [];
+
+    /** @var ?int $page Page Number */
+    protected ?int $page = null;
 
     ####################################################################
     /*------------------------- EXTERNAL API -------------------------*/
@@ -150,7 +119,7 @@ class Model
         // Trim & Quote Columns
         $trimed = array_map(function($v) {
             $v = trim($v);
-            return call_user_func([new Quote($v, $this->driver), 'sql']);
+            return $this->sanitize($v);
         }, $array);
         $this->columns = implode(',', $trimed);
         return $this;
@@ -177,11 +146,16 @@ class Model
      */
     public function join(string $table, string $first, string $operator, string $second, string $type = 'LEFT'): Model
     {
+        $allowedOps = ['=', '!=', '<>', '<', '>', '<=', '>='];
+        if (!in_array(trim($operator), $allowedOps, true)) {
+            throw new \InvalidArgumentException("Invalid join operator [{$operator}].");
+        }
+
         $type = strtoupper($type);
         // Quote String
-        $table = call_user_func([new Quote($table, $this->driver), 'sql']);
-        $first = call_user_func([new Quote($first, $this->driver), 'sql']);
-        $second = call_user_func([new Quote($second, $this->driver), 'sql']);
+        $table = $this->sanitize($table);
+        $first = $this->sanitize($first);
+        $second = $this->sanitize($second);
 
         if (!in_array($type, ['LEFT', 'RIGHT', 'INNER'])) {
             throw new \InvalidArgumentException("Invalid join type: {$type}");
@@ -200,9 +174,14 @@ class Model
      */
     public function where(array $where, string $operator = '=', string $compare = 'AND'): Model
     {
+        $allowed = ['=', '!=', '<>', '<', '>', '<=', '>=', 'LIKE', 'NOT LIKE'];
+        if (!in_array(strtoupper(trim($operator)), $allowed, true)) {
+            throw new \InvalidArgumentException("Invalid operator [{$operator}].");
+        }
+
         foreach ($where as $col => $val) {
             // Quote String
-            $col = call_user_func([new Quote($col, $this->driver), 'sql']);
+            $col = $this->sanitize($col);
             $this->addWhere("{$col} {$operator} ?", [$val], $compare);
         }
         return $this;
@@ -229,7 +208,7 @@ class Model
     public function whereIn(string $column, array $values, string $compare = 'AND'): Model
     {
         // Quote String
-        $column = call_user_func([new Quote($column, $this->driver), 'sql']);
+        $column = $this->sanitize($column);
 
         $placeholders = implode(',', array_fill(0, count($values), '?'));
         $this->addWhere("{$column} IN ({$placeholders})", $values, $compare);
@@ -245,7 +224,7 @@ class Model
      */
     public function whereNotIn(string $column, array $values, string $compare = 'AND'): Model
     {
-        $column = call_user_func([new Quote($column, $this->driver), 'sql']);
+        $column = $this->sanitize($column);
         $placeholders = implode(',', array_fill(0, count($values), '?'));
         $this->addWhere("{$column} NOT IN ({$placeholders})", $values, $compare);
         return $this;
@@ -260,7 +239,7 @@ class Model
     public function isNull(string $column, string $compare = 'AND'): Model
     {
         // Quote String
-        $column = call_user_func([new Quote($column, $this->driver), 'sql']);
+        $column = $this->sanitize($column);
 
         $this->addWhere("{$column} IS NULL", [], $compare);
         return $this;
@@ -275,7 +254,7 @@ class Model
     public function notNull(string $column, string $compare = 'AND'): Model
     {
         // Quote String
-        $column = call_user_func([new Quote($column, $this->driver), 'sql']);
+        $column = $this->sanitize($column);
 
         $this->addWhere("{$column} IS NOT NULL", [], $compare);
         return $this;
@@ -292,7 +271,7 @@ class Model
     public function between(string $column, mixed $value1, mixed $value2, string $compare = 'AND'): Model
     {
         // Quote String
-        $column = call_user_func([new Quote($column, $this->driver), 'sql']);
+        $column = $this->sanitize($column);
 
         $this->addWhere("{$column} BETWEEN ? AND ?", [$value1, $value2], strtoupper($compare));
         return $this;
@@ -331,7 +310,7 @@ class Model
     {
         $this->groupBy = array_map(function($column){
             // Quote String
-            return call_user_func([new Quote($column, $this->driver), 'sql']);
+            return $this->sanitize($column);
         }, $columns);
         return $this;
     }
@@ -345,8 +324,13 @@ class Model
      */
     public function having(string $column, string $operator, mixed $value): Model
     {
+        $allowed = ['=', '!=', '<>', '<', '>', '<=', '>=', 'LIKE', 'NOT LIKE'];
+        if (!in_array(strtoupper(trim($operator)), $allowed, true)) {
+            throw new \InvalidArgumentException("Invalid operator [{$operator}].");
+        }
+
         // Quote String
-        $column = call_user_func([new Quote($column, $this->driver), 'sql']);
+        $column = $this->sanitize($column);
 
         $this->having[]     =   "{$column} {$operator} ?";
         $this->bindings[]   =   $value;
@@ -368,7 +352,7 @@ class Model
             throw new \InvalidArgumentException("Invalid order direction: {$direction}");
         }
         // Quote String
-        $column = call_user_func([new Quote($column, $this->driver), 'sql']);
+        $column = $this->sanitize($column);
 
         $this->orderBy[] = "{$column} {$direction}";
         return $this;
@@ -392,8 +376,7 @@ class Model
      */
     public function offset(int|string $page = 1): Model
     {
-        $offset = ((int)$page - 1) * (int) $this->limit;
-        $this->offset = ($offset < 0) ? 0 : $offset;
+        $this->page = max(1, (int) $page);
         return $this;
     }
 
@@ -431,10 +414,14 @@ class Model
         $stmt = $this->pdo->prepare($sql);
         $stmt->execute($this->bindings);
 
-        // Fetch Results
-        $result = $stmt->fetchAll();
+        // Fetch Rows
+        $rows = $stmt->fetchAll();
+        // Type Cast
+        foreach ($rows as $k => $row) {
+            $rows[$k] = $this->cast($row);
+        }
         $this->reset();
-        return $result;
+        return $rows;
     }
 
     /**
@@ -443,10 +430,14 @@ class Model
      */
     public function first(): array
     {
+        // Check Where Clause Exists
+        if (empty($this->wheres)) {
+            throw new \InvalidArgumentException("WHERE Clause Required For Single Data.");
+        }
+
         $this->limit(1);
         $result = $this->get();
-        $first = $result[0] ?? [];
-        return $first;
+        return $result[0] ?? [];
     }
 
     /**
@@ -497,11 +488,16 @@ class Model
      */
     public function firstOrFail(): array
     {
-        $result = $this->first();
-        if (empty($result)) {
+        try {
+            $row = $this->first();
+        } catch (\InvalidArgumentException $e) {
+            throw new \RuntimeException($e->getMessage(), (int) $e->getCode(), $e);
+        }
+
+        if (empty($row)) {
             throw new \RuntimeException("No Records Found");
         }
-        return $result;
+        return $row;
     }
 
     /**
@@ -526,86 +522,85 @@ class Model
 
         // Quote columns
         $columns = array_map(function ($column) {
-            return (new Quote($column, $this->driver))->sql();
+            return $this->sanitize($column);
         }, $keys);
 
-        // Build placeholders
-        $rowPlaceholders = '(' . implode(', ', array_fill(0, count($columns), '?')) . ')';
-        $placeholders = implode(', ', array_fill(0, count($rows), $rowPlaceholders));
-
         // Sanitize Table
-        $this->table = $this->sanitize($this->table);
+        $tbl = $this->sanitize($this->table);
 
-        // Build SQL
-        $sql = "INSERT INTO {$this->table} (" . implode(', ', $columns) . ") VALUES {$placeholders}";
+        // Chunk rows into max 1000 per query
+        foreach (array_chunk($rows, 1000) as $chunk) {
 
-        // Log query
-        Log::add($sql, $this->connection);
+            // Build placeholders for this chunk
+            $rowPlaceholders = '(' . implode(', ', array_fill(0, count($columns), '?')) . ')';
+            $placeholders    = implode(', ', array_fill(0, count($chunk), $rowPlaceholders));
 
-        // Flatten bindings
-        $bindings = [];
-        foreach ($rows as $row) {
-            // Ensure row structure consistency
-            if (array_keys($row) !== $keys) {
-                throw new \InvalidArgumentException('All insert rows must have identical columns.');
+            // Build SQL
+            $sql = "INSERT INTO {$tbl} (" . implode(', ', $columns) . ") VALUES {$placeholders}";
+
+            // Log query
+            Log::add($sql, $this->connection);
+
+            // Flatten bindings
+            $bindings = [];
+            foreach ($chunk as $row) {
+                // Ensure row structure consistency
+                if (array_keys($row) !== $keys) {
+                    throw new \InvalidArgumentException('All insert rows must have identical columns.');
+                }
+                $bindings = array_merge($bindings, array_values($row));
             }
-            $bindings = array_merge($bindings, array_values($row));
-        }
 
-        // Execute
-        try {
-            $stmt = $this->pdo->prepare($sql);
-            $result = $stmt->execute($bindings);
-        } catch (\Throwable $th) {
-            throw new \RuntimeException($th->getMessage());
+            // Execute
+            try {
+                $stmt = $this->pdo->prepare($sql);
+                $stmt->execute($bindings);
+            } catch (\Throwable $th) {
+                throw new \RuntimeException($th->getMessage());
+            }
         }
 
         // Reset builder state
         $this->reset();
-
-        return $result ? $this->pdo->lastInsertId() : false;
+        return $this->pdo->lastInsertId();
     }
 
     /**
      * Chunk the Results
      * @param int $size Chunk Size. Example: 100
      * @param callable $callback Callback function. Argument is an array of results. Example: function(array $rows) { ... }
-     * @throws \InvalidArgumentException Throws an exception if chunk size is invalid
      * @return void
      */
     public function chunk(int $size, callable $callback): void
     {
-        if ($size <= 0) {
-            throw new \InvalidArgumentException("Chunk Size Must be Greater Than 0, Got: [{$size}]");
-        }
+        $size = max(1, $size);
 
-        $offset = 0;
+        $page = 1;
 
         while (true) {
-            // Select in chunks
-            $sql = $this->build() . " LIMIT {$size} OFFSET {$offset}";
-            // Add Queries to Log
+            $this->limit = $size;
+            $this->page  = $page; // use page instead of offset directly
+
+            $sql = $this->build();
             Log::add($sql, $this->connection);
 
-            // Execute Query
             $stmt = $this->pdo->prepare($sql);
             $stmt->execute($this->bindings);
 
-            // Fetch Results
-            $results = $stmt->fetchAll();
+            $rows = $stmt->fetchAll();
 
-            // Break if no results
-            if (empty($results)) {
+            if (empty($rows)) {
+                $this->reset();
                 break;
             }
 
-            // Pass the results to the callback
-            $callback($results);
+            foreach ($rows as $k => $row) {
+                $rows[$k] = $this->cast($row);
+            }
 
-            // Move offset forward
-            $offset += $size;
+            $callback($rows);
+            $page++;
         }
-        $this->reset();
     }
 
     /**
@@ -616,20 +611,22 @@ class Model
      */
     public function update(array $data): int
     {
+        // Check Where Clause Exists
         if (empty($this->wheres)) {
             throw new \InvalidArgumentException("No WHERE Clause Provided for UPDATE operation.");
         }
+
         $set = [];
         foreach (array_keys($data) as $column) {
-            $column = call_user_func([new Quote($column, $this->driver), 'sql']);
+            $column = $this->sanitize($column);
             $set[] = "{$column} = ?";
         }
 
         // Sanitize Table
-        $this->table = $this->sanitize($this->table);
+        $tbl = $this->sanitize($this->table);
 
         // Make SQL
-        $sql = "UPDATE {$this->table} SET " . implode(', ', $set);
+        $sql = "UPDATE {$tbl} SET " . implode(', ', $set);
 
         if (!empty($this->joins)) {
             $sql .= " " . implode(' ', $this->joins);
@@ -680,10 +677,10 @@ class Model
         }
 
         // Sanitize Table
-        $this->table = $this->sanitize($this->table);
+        $tbl = $this->sanitize($this->table);
 
         // Make SQL
-        $sql = "DELETE FROM {$this->table}";
+        $sql = "DELETE FROM {$tbl}";
 
         $sql .= " WHERE " . implode(' ', $this->wheres);
 
@@ -698,6 +695,86 @@ class Model
         $rowcount = $stmt->rowCount();
         $this->reset();
         return $rowcount;
+    }
+
+    /**
+     * Increment a numeric column by $number. Returns affected row count.
+     * @param string $column Column to Increment
+     * @param int $number Increment Number. default is 1
+     * @example $users->increment('views', 1);
+     */
+    public function increment(string $column, int $number = 1): int
+    {
+        // Validate Column
+        if (!preg_match('/^[a-z\._]+$/i', $column)) {
+            throw new ModelException("Invalid Column [{$column}]");
+        }
+
+        if (str_contains($column, '.')) {
+            [$tblName, $colName] = explode('.', $column, 2);
+            $tbl = $this->sanitize($tblName);
+            $col = $this->sanitize($colName);
+        } else {
+            $tbl = $this->sanitize($this->table);
+            $col = $this->sanitize($column);
+        }
+
+        // Check Where Clause Exists
+        if (empty($this->wheres)) {
+            throw new \InvalidArgumentException("No WHERE Clause Provided For Increment Operation.");
+        }
+
+        $where = "WHERE " . implode(' ', $this->wheres);
+        $sql = "UPDATE {$tbl} SET {$col} = {$col} + ? {$where}";
+
+        // Add Queries to Log
+        Log::add($sql, $this->connection);
+    
+        // Execute Query
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute(array_merge([$number], $this->bindings));
+
+        return $stmt->rowCount();
+    }
+
+    /**
+     * Decrement a numeric column by $number. Returns affected row count.
+     * @param string $column Column to Decrement
+     * @param int $number Decrement Number. default is 1
+     * @example $users->decrement('views', 1);
+     */
+    public function decrement(string $column, int $number = 1): int
+    {
+        // Validate Column
+        if (!preg_match('/^[a-z\._]+$/i', $column)) {
+            throw new ModelException("Invalid Column [{$column}]");
+        }
+
+        if (str_contains($column, '.')) {
+            [$tblName, $colName] = explode('.', $column, 2);
+            $tbl = $this->sanitize($tblName);
+            $col = $this->sanitize($colName);
+        } else {
+            $tbl = $this->sanitize($this->table);
+            $col = $this->sanitize($column);
+        }
+
+        // Check Where Clause Exists
+        if (empty($this->wheres)) {
+            throw new \InvalidArgumentException("No WHERE Clause Provided For Decrement Operation.");
+        }
+
+        $where = "WHERE " . implode(' ', $this->wheres);
+        $sql = "UPDATE {$tbl} SET {$col} = {$col} - ? {$where}";
+
+        // Add Queries to Log
+        Log::add($sql, $this->connection);
+    
+        // Execute Query
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute(array_merge([$number], $this->bindings));
+
+        return $stmt->rowCount();
     }
 
     /**
@@ -777,20 +854,19 @@ class Model
      * @return string
      * @throws \RuntimeException
      */
-    public function uid(string $prefix = 'uid', int $maxAttempts = 10): string
-    {
-        $prefix = empty($prefix) ? 'uid' : strtolower($prefix);
-        
+    public function uid(int $maxAttempts = 10): string
+    {        
         for ($attempt = 0; $attempt < $maxAttempts; $attempt++) {
             $time = substr(str_replace('.', '', (string) microtime(true)), -6);
-            $bytes = mt_rand(3,4);
-            $str1 = bin2hex(random_bytes($bytes));
+            $str1 = bin2hex(random_bytes(3));
             $str2 = bin2hex(random_bytes(3));
-            $str3 = bin2hex(random_bytes($bytes));
+            $str3 = bin2hex(random_bytes(3));
             $str4 = bin2hex(random_bytes(3));
-            $uid = "{$prefix}-{$str1}-{$str2}-{$str3}-{$str4}-{$time}";
+            $uid = strtoupper("UID-{$str1}-{$str2}-{$str3}-{$str4}-{$time}");
             
-            if (!$this->select($this->uid)->where([$this->uid => $uid])->first()) {
+            $exists = $this->select($this->uid)->where([$this->uid => $uid])->count() > 0;
+
+            if (!$exists) {
                 return $uid;
             }
         }
@@ -801,6 +877,7 @@ class Model
     ####################################################################
     /*------------------------- INTERNAL API -------------------------*/
     ####################################################################
+
     /**
      * Add Where Condition
      * @param string $condition Required condition string
@@ -828,9 +905,9 @@ class Model
         }
 
         // Sanitize Table
-        $this->table = $this->sanitize($this->table);
+        $tbl = $this->sanitize($this->table);
 
-        $sql = "SELECT {$this->columns} FROM {$this->table}";
+        $sql = "SELECT {$this->columns} FROM {$tbl}";
 
         if (!empty($this->joins)) {
             $sql .= " " . implode(' ', $this->joins);
@@ -852,15 +929,113 @@ class Model
             $sql .= " ORDER BY " . implode(', ', $this->orderBy);
         }
 
-        if ($this->limit !== null) {
-            $sql .= " LIMIT {$this->limit}";
+        $offset = null;
+
+        if ($this->page !== null) {
+            if ($this->limit === null) {
+                throw new \InvalidArgumentException(
+                    "Limit() Must Be Set Before Using Offset()."
+                );
+            }
+            $offset = ($this->page - 1) * $this->limit;
         }
 
-        if ($this->offset !== null) {
-            $sql .= " OFFSET {$this->offset}";
+        if ($this->limit !== null) {
+            switch ($this->driver) {
+                case 'sqlsrv':
+                    if ($offset !== null) {
+                        if (empty($this->orderBy)) {
+                            throw new \InvalidArgumentException(
+                                "SQL Server Requires ORDER BY When Using OFFSET."
+                            );
+                        }
+                        $sql .= " OFFSET {$offset} ROWS FETCH NEXT {$this->limit} ROWS ONLY";
+                    } else {
+                        $sql = preg_replace('/^SELECT\s/i', "SELECT TOP {$this->limit} ", $sql);
+                    }
+                    break;
+
+                case 'oci':
+                case 'oracle':
+                    if ($offset !== null) {
+                        if (empty($this->orderBy)) {
+                            throw new \InvalidArgumentException(
+                                "Oracle Requires ORDER BY When Using OFFSET."
+                            );
+                        }
+                        $sql .= " OFFSET {$offset} ROWS FETCH NEXT {$this->limit} ROWS ONLY";
+                    } else {
+                        $sql .= " FETCH FIRST {$this->limit} ROWS ONLY";
+                    }
+                    break;
+
+                case 'firebird':
+                case 'ibase':
+                    $start = ($offset ?? 0) + 1;
+                    $end   = $start + $this->limit - 1;
+                    $sql  .= " ROWS {$start} TO {$end}";
+                    break;
+
+                default:
+                    $sql .= " LIMIT {$this->limit}";
+                    if ($offset !== null) {
+                        $sql .= " OFFSET {$offset}";
+                    }
+                    break;
+            }
         }
 
         return $sql;
+    }
+
+    /**
+     * Apply type casts to a fetched row.
+     * @return array
+     */
+    protected function cast(array $row): array
+    {
+        foreach ($this->casts as $column => $type) {
+            if (!array_key_exists($column, $row)) continue;
+
+            $value = $row[$column];
+
+            $row[$column] = match (strtolower($type)) {
+                'int', 'integer'  => (int) $value,
+                'float', 'double' => (float) $value,
+
+                // Fix: compare against known falsy values instead of naive (bool) cast
+                'bool', 'boolean' => !in_array($value, [0, '0', '', 'false', false, null], true),
+
+                // Fix: guard against null and catch malformed JSON
+                'array', 'json'   => $value === null
+                                        ? null
+                                        : (static function () use ($value) {
+                                                $decoded = json_decode((string) $value, true);
+                                                if (json_last_error() !== JSON_ERROR_NONE) {
+                                                    throw new \UnexpectedValueException(
+                                                        "Failed to decode JSON: " . json_last_error_msg()
+                                                    );
+                                                }
+                                                return $decoded;
+                                            })(),
+                'serialize' => $value === null
+                                    ? null
+                                    : (static function () use ($value) {
+                                        // unserialize returns false on failure — never suppress with @
+                                        $result = unserialize((string) $value);
+                                        if ($result === false && (string) $value !== 'b:0;') {
+                                            throw new \UnexpectedValueException(
+                                                "Failed to unserialize value: [{$value}]"
+                                            );
+                                        }
+                                        return $result;
+                                    })(),
+
+                'string'          => $value === null ? null : (string) $value,
+                default           => $value,
+            };
+        }
+        return $row;
     }
 
     /**
@@ -876,19 +1051,47 @@ class Model
         $this->groupBy  =   [];
         $this->orderBy  =   [];
         $this->limit    =   null;
-        $this->offset   =   null;
+        $this->page     =   null;
         $this->having   =   [];
         $this->softDelete = false;
     }
 
+    private function wrapIdent(string $name, string $driver): string
+    {
+        return match ($driver) {
+            'mysql', 'mariadb' => '`' . str_replace('`', '``', $name) . '`',
+            'sqlsrv'           => '[' . str_replace(']', ']]', $name) . ']',
+            default            => '"' . str_replace('"', '""', $name) . '"',
+        };
+    }
+
     /**
      * Add Table Sanitization in Model Class
+     * @return string
      */
     protected function sanitize(string $identifier): string
     {
         // Remove dangerous characters
-        return preg_replace('/[^a-zA-Z0-9_]/', '', $identifier);
-}
+        // return preg_replace('/[^a-zA-Z0-9_]/', '', $identifier);
+
+        // Handle table.column notation
+        if (str_contains($identifier, '.')) {
+            [$table, $column] = explode('.', $identifier, 2);
+            return $this->wrapIdent($this->validate($table), $this->driver)
+                . '.'
+                . $this->wrapIdent($this->validate($column), $this->driver);
+        }
+
+        return $this->wrapIdent($this->validate($identifier), $this->driver);
+    }
+
+    private function validate(string $name): string
+    {
+        if (!preg_match('/^[a-zA-Z_][a-zA-Z0-9_]*$/', $name)) {
+            throw new ModelException("Invalid identifier [{$name}].");
+        }
+        return $name;
+    }
 
     /**
      * Prevent Cloning
