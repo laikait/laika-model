@@ -35,7 +35,7 @@ abstract class Grammar
     {
         $sql = $this->wrapColumn($col['name']) . ' ' . $this->resolveType($col);
 
-        if (!empty($col['unsigned'])) {
+        if (!empty($col['unsigned']) && !str_contains($sql, 'UNSIGNED')) {
             $sql .= ' UNSIGNED';
         }
 
@@ -63,29 +63,29 @@ abstract class Grammar
     protected function resolveType(array $col): string
     {
         return match ($col['type']) {
-            'id'             => $this->typeId($col),
-            'bigId'          => $this->typeBigId($col),
-            'integer'        => $this->typeInteger($col),
-            'bigInteger'     => $this->typeBigInteger($col),
-            'smallInteger'   => $this->typeSmallInteger($col),
-            'tinyInteger'    => $this->typeTinyInteger($col),
-            'float'          => $this->typeFloat($col),
-            'double'         => $this->typeDouble($col),
-            'decimal'        => $this->typeDecimal($col),
-            'boolean'        => $this->typeBoolean($col),
-            'string'         => $this->typeString($col),
-            'char'           => $this->typeChar($col),
-            'text'           => $this->typeText($col),
-            'mediumText'     => $this->typeMediumText($col),
-            'longText'       => $this->typeLongText($col),
-            'date'           => $this->typeDate($col),
-            'time'           => $this->typeTime($col),
-            'dateTime'       => $this->typeDateTime($col),
-            'timestamp'      => $this->typeTimestamp($col),
-            'json'           => $this->typeJson($col),
-            'binary'         => $this->typeBinary($col),
-            'uuid'           => $this->typeUuid($col),
-            default          => strtoupper($col['type']),
+            'id'            => $this->typeId($col),
+            'bigId'         => $this->typeBigId($col),
+            'integer'       => $this->typeInteger($col),
+            'bigInteger'    => $this->typeBigInteger($col),
+            'smallIntege'   => $this->typeSmallInteger($col),
+            'tinyInteger'   => $this->typeTinyInteger($col),
+            'float'         => $this->typeFloat($col),
+            'double'        => $this->typeDouble($col),
+            'decimal'       => $this->typeDecimal($col),
+            'boolean'       => $this->typeBoolean($col),
+            'string'        => $this->typeString($col),
+            'char'          => $this->typeChar($col),
+            'text'          => $this->typeText($col),
+            'mediumText'    => $this->typeMediumText($col),
+            'longText'      => $this->typeLongText($col),
+            'date'          => $this->typeDate($col),
+            'time'          => $this->typeTime($col),
+            'dateTime'      => $this->typeDateTime($col),
+            'timestamp'     => $this->typeTimestamp($col),
+            'json'          => $this->typeJson($col),
+            'binary'        => $this->typeBinary($col),
+            'uid'           => $this->typeUuid($col),
+            default         => strtoupper($col['type']),
         };
     }
 
@@ -117,7 +117,7 @@ abstract class Grammar
     protected function typeTimestamp(array $col): string  { return 'TIMESTAMP'; }
     protected function typeJson(array $col): string       { return 'JSON'; }
     protected function typeBinary(array $col): string     { return 'BLOB'; }
-    protected function typeUuid(array $col): string       { return 'CHAR(36)'; }
+    protected function typeUuid(array $col): string       { return 'CHAR(38)'; }
 
     protected function autoIncrementKeyword(): string     { return 'AUTO_INCREMENT'; }
 

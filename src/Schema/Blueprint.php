@@ -113,6 +113,11 @@ class Blueprint
         return $this->addColumn('string', $name, ['length' => $length]);
     }
 
+    public function serialize(string $name): ColumnDefinition
+    {
+        return $this->addColumn('text', $name);
+    }
+
     public function char(string $name, int $length = 36): ColumnDefinition
     {
         return $this->addColumn('char', $name, ['length' => $length]);
@@ -165,7 +170,7 @@ class Blueprint
     }
 
     /** Add deleted_at nullable timestamp column for soft deletes. */
-    public function softDeletes(string $column = 'deleted_at'): ColumnDefinition
+    public function deleted(string $column = 'deleted_at'): ColumnDefinition
     {
         return $this->timestamp($column)->nullable()->default(null);
     }
@@ -184,9 +189,9 @@ class Blueprint
         return $this->addColumn('binary', $name);
     }
 
-    public function uuid(string $name = 'uuid'): ColumnDefinition
+    public function uid(string $name = 'uid'): ColumnDefinition
     {
-        return $this->addColumn('uuid', $name);
+        return $this->addColumn('uid', $name);
     }
 
     // -----------------------------------------------------------------------

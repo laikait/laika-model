@@ -23,13 +23,11 @@ abstract class AbstractDriver implements DriverInterface
 
     public function getOptions(array $config): array
     {
-        return array_merge(
-            [
+        $default_options = [
                 \PDO::ATTR_ERRMODE            => \PDO::ERRMODE_EXCEPTION,
                 \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC,
                 \PDO::ATTR_EMULATE_PREPARES   => false,
-            ],
-            $config['options'] ?? []
-        );
+            ];
+        return $default_options + ($config['options'] ?? []);
     }
 }

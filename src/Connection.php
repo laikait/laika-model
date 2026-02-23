@@ -26,7 +26,7 @@ final class Connection
     private static array $instances = [];
 
     /** @var array<string,string> */
-    private array $drivers = [];
+    private static array $drivers = [];
 
     // Prevent instantiation
     private function __construct() {}
@@ -125,7 +125,7 @@ final class Connection
      * @param string $name Connection Name for Driver
      * @return string
      */
-    public static function driver(string $name): string
+    public static function driver(string $name = 'default'): string
     {
         if (!isset(self::$drivers[$name])) {
             throw new ConnectionException("Connection [{$name}] Initiate First.");
@@ -140,18 +140,15 @@ final class Connection
     private static function createPdo(string $name): PDO
     {
         $config = self::$configs[$name];
-        $driver  = DriverFactory::make($config);
-        $dsn     = $driver->buildDsn($config);
+        $driver = DriverFactory::make($config);
+        $dsn = $driver->buildDsn($config);
         $options = $driver->getOptions($config);
         self::$drivers[$name] = $driver->getName();
+        $username = $config['username'] ?? null;
+        $password = $config['password'] ?? null;
 
         try {
-            return new PDO(
-                $dsn,
-                $config['username'] ?? null,
-                $config['password'] ?? null,
-                $options
-            );
+            return new PDO($dsn, $username, $password, $options);
         } catch (\PDOException $e) {
             throw new ConnectionException(
                 "Failed to connect [{$config['driver']}]: {$e->getMessage()}",

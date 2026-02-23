@@ -32,12 +32,9 @@ class SqliteDriver extends AbstractDriver
     public function getOptions(array $config): array
     {
         // SQLite doesn't support ATTR_EMULATE_PREPARES = false well in all versions
-        return array_merge(
-            [
-                \PDO::ATTR_ERRMODE            => \PDO::ERRMODE_EXCEPTION,
-                \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC,
-            ],
-            $config['options'] ?? []
-        );
+        return parent::getOptions($config) + [
+            \PDO::ATTR_ERRMODE            => \PDO::ERRMODE_EXCEPTION,
+            \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC,
+        ];
     }
 }

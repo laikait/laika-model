@@ -37,8 +37,8 @@ class MySqlDriver extends AbstractDriver
 
     public function getOptions(array $config): array
     {
-        return array_merge(parent::getOptions($config), [
+        return parent::getOptions($config) + [
             \PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES '{$this->getCharset($config)}'",
-        ]);
+        ];
     }
 }

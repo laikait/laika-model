@@ -25,11 +25,11 @@ use Laika\Model\Schema\Grammars\SqliteGrammar;
  *
  *   Schema::on('pgsql')->create('users', function (Blueprint $table) { ... });
  *
- *   Schema::drop('users');
- *   Schema::dropIfExists('users');
- *   Schema::hasTable('users');
- *   Schema::hasColumn('users', 'email');
- *   Schema::table('users', function (Blueprint $table) {
+ *   Schema::on('pgsql')->drop('users');
+ *   Schema::on('pgsql')->dropIfExists('users');
+ *   Schema::on('pgsql')->hasTable('users');
+ *   Schema::on('pgsql')->hasColumn('users', 'email');
+ *   Schema::on('pgsql')->table('users', function (Blueprint $table) {
  *       $table->string('phone')->nullable();
  *   });
  */
@@ -58,16 +58,16 @@ class Schema
     // -----------------------------------------------------------------------
 
     /** Select a specific connection for schema operations. */
-    public static function on(string $connection): self
+    public static function on(string $connection = 'default'): self
     {
         return new self($connection);
     }
 
-    // Proxy static calls to a default-connection instance
-    public static function __callStatic(string $method, array $args): mixed
-    {
-        return (new self('default'))->$method(...$args);
-    }
+    // // Proxy static calls to a default-connection instance
+    // public static function __callStatic(string $method, array $args): mixed
+    // {
+    //     return (new self('default'))->$method(...$args);
+    // }
 
     // -----------------------------------------------------------------------
     // Operations
@@ -81,7 +81,11 @@ class Schema
         $blueprint = new Blueprint($table, $options);
         $callback($blueprint);
         $sql = $this->grammar()->compileCreate($blueprint);
-        $this->pdo()->exec($sql);
+        try {
+            $this->pdo()->exec($sql);
+        } catch (\Throwable $th) {
+            throw new SchemaException("Schema Error is Query [{$sql}]", (int) $th->getCode(), $th);
+        }
     }
 
     /**
