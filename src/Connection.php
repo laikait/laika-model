@@ -80,7 +80,7 @@ final class Connection
     /**
      * Check if a named connection config exists.
      */
-    public static function has(string $name): bool
+    public static function has(string $name = 'default'): bool
     {
         return isset(self::$configs[$name]);
     }
