@@ -1,5 +1,9 @@
 # Laika Single/Multi Connecton Database Model
-Laika Model Singleton Database Model is a PHP-based project that implements a robust, object-oriented database management system for handling complex transactions and data manipulation tasks. Built on top of MySQL, this singleton model aims to provide a high-performance, flexible, and secure way to interact with databases in PHP applications, specifically designed to streamline billing and cloud data management systems.
+A lightweight, secure PDO database model and schema builder for PHP 8.1+.  
+Supports MySQL, MariaDB, PostgreSQL, SQLite, SQL Server, Oracle, and Firebird.
+
+**Author:** Showket Ahmed  
+**License:** MIT
 
 # Key Features
 * <b>Object-Oriented Structure</b>: Built with PHP OOP principles, ensuring code reusability, scalability, and maintainability.</br>
@@ -14,12 +18,6 @@ Laika Model Singleton Database Model is a PHP-based project that implements a ro
 * <b>PHP (Object-Oriented)</b>: Core programming language, providing OOP features for structure and maintainability.</br>
 * <b>MySQL</b>: Relational database management system used for data storage, with optimized queries for faster performance.</br>
 * <b>PDO (PHP Data Objects)</b>: Utilized for secure database access with prepared statements to prevent SQL injection.</br>
-
-A lightweight, secure PDO database model and schema builder for PHP 8.1+.  
-Supports MySQL, MariaDB, PostgreSQL, SQLite, SQL Server, Oracle, and Firebird.
-
-**Author:** Showket Ahmed  
-**License:** MIT
 
 ---
 
