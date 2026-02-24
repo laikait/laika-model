@@ -188,7 +188,9 @@ class Blueprint
     /** Add deleted_at nullable timestamp column for soft deletes. */
     public function deleted(string $column = 'deleted_at'): ColumnDefinition
     {
-        return $this->timestamp($column)->nullable();
+        $res = $this->timestamp($column)->nullable();
+        $this->index($column);
+        return $res;
     }
 
     // -----------------------------------------------------------------------
@@ -207,7 +209,9 @@ class Blueprint
 
     public function uid(string $name = 'uid'): ColumnDefinition
     {
-        return $this->addColumn('uid', $name);
+        $res = $this->addColumn('uid', $name);
+        $this->unique($name);
+        return $res;
     }
 
     // -----------------------------------------------------------------------
