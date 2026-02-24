@@ -715,12 +715,13 @@ class Model
             $tbl = $this->sanitize($tblName);
             $col = $this->sanitize($colName);
         } else {
-            $tbl = $this->sanitize($this->table);
-            $col = $this->sanitize($column);
+            $colName = $column;
+            $tbl     = $this->sanitize($this->table);
+            $col     = $this->sanitize($column);
         }
 
-        // Check Column Name Does Not Match Primary Key
-        if (preg_replace('/[^a-z_]+/i', '', $col) == $this->id) {
+        // Compare raw unquoted name — clean, no regex needed
+        if ($colName === $this->id) {
             throw new ModelException("Not Possible To Increment Primary Key!");
         }
 
@@ -760,13 +761,14 @@ class Model
             $tbl = $this->sanitize($tblName);
             $col = $this->sanitize($colName);
         } else {
-            $tbl = $this->sanitize($this->table);
-            $col = $this->sanitize($column);
+            $colName = $column;
+            $tbl     = $this->sanitize($this->table);
+            $col     = $this->sanitize($column);
         }
 
-        // Check Column Name Does Not Match Primary Key
-        if (preg_replace('/[^a-z_]+/i', '', $col) == $this->id) {
-            throw new ModelException("Not Possible To Decrement Primary Key!");
+        // Compare raw unquoted name — clean, no regex needed
+        if ($colName === $this->id) {
+            throw new ModelException("Not Possible To Increment Primary Key!");
         }
 
         // Check Where Clause Exists
