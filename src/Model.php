@@ -374,7 +374,7 @@ class Model
      * @param int|string $page Page Number. Default is Page Number 1
      * @return Model
      */
-    public function offset(int|string $page = 1): Model
+    public function page(int|string $page = 1): Model
     {
         $this->page = max(1, (int) $page);
         return $this;
@@ -719,6 +719,11 @@ class Model
             $col = $this->sanitize($column);
         }
 
+        // Check Column Name Does Not Match Primary Key
+        if (preg_replace('/[^a-z_]+/i', '', $col) == $this->id) {
+            throw new ModelException("Not Possible To Increment Primary Key!");
+        }
+
         // Check Where Clause Exists
         if (empty($this->wheres)) {
             throw new \InvalidArgumentException("No WHERE Clause Provided For Increment Operation.");
@@ -757,6 +762,11 @@ class Model
         } else {
             $tbl = $this->sanitize($this->table);
             $col = $this->sanitize($column);
+        }
+
+        // Check Column Name Does Not Match Primary Key
+        if (preg_replace('/[^a-z_]+/i', '', $col) == $this->id) {
+            throw new ModelException("Not Possible To Decrement Primary Key!");
         }
 
         // Check Where Clause Exists
