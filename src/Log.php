@@ -51,6 +51,6 @@ class Log
      */
     public static function count(): int
     {
-        return count(self::$queries);
+        return array_sum(array_map('count', self::$queries));
     }
 }
