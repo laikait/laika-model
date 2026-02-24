@@ -113,6 +113,22 @@ class Blueprint
         return $this->addColumn('string', $name, ['length' => $length]);
     }
 
+    public function enum(string $name, array $values): ColumnDefinition
+    {
+        if (empty($values)) {
+            throw new \InvalidArgumentException("Enum values cannot be empty for column [{$name}].");
+        }
+        return $this->addColumn('enum', $name, ['values' => array_values($values)]);
+    }
+
+    public function set(string $name, array $values): ColumnDefinition
+    {
+        if (empty($values)) {
+            throw new \InvalidArgumentException("Set values cannot be empty for column [{$name}].");
+        }
+        return $this->addColumn('set', $name, ['values' => array_values($values)]);
+    }
+
     public function serialize(string $name): ColumnDefinition
     {
         return $this->addColumn('text', $name);

@@ -65,9 +65,10 @@ abstract class Grammar
         return match ($col['type']) {
             'id'            => $this->typeId($col),
             'bigId'         => $this->typeBigId($col),
+            'uid'           => $this->typeUid($col),
             'integer'       => $this->typeInteger($col),
             'bigInteger'    => $this->typeBigInteger($col),
-            'smallIntege'   => $this->typeSmallInteger($col),
+            'smallInteger'   => $this->typeSmallInteger($col),
             'tinyInteger'   => $this->typeTinyInteger($col),
             'float'         => $this->typeFloat($col),
             'double'        => $this->typeDouble($col),
@@ -84,7 +85,8 @@ abstract class Grammar
             'timestamp'     => $this->typeTimestamp($col),
             'json'          => $this->typeJson($col),
             'binary'        => $this->typeBinary($col),
-            'uid'           => $this->typeUuid($col),
+            'enum'          => $this->typeEnum($col),
+            'set'           => $this->typeSet($col),
             default         => strtoupper($col['type']),
         };
     }
@@ -117,7 +119,25 @@ abstract class Grammar
     protected function typeTimestamp(array $col): string  { return 'TIMESTAMP'; }
     protected function typeJson(array $col): string       { return 'JSON'; }
     protected function typeBinary(array $col): string     { return 'BLOB'; }
-    protected function typeUuid(array $col): string       { return 'CHAR(38)'; }
+    protected function typeUid(array $col): string       { return 'CHAR(38)'; }
+    protected function typeEnum(array $col): string
+    {
+        // Default fallback for drivers without native ENUM
+        // Use VARCHAR + CHECK constraint
+        $quoted = implode(', ', array_map(
+            fn($v) => "'" . addslashes($v) . "'",
+            $col['values'] ?? []
+        ));
+        $colName = $col['name'];
+        return "VARCHAR(255) CHECK ({$colName} IN ({$quoted}))";
+    }
+
+    protected function typeSet(array $col): string
+    {
+        // SET has no cross-driver equivalent — fall back to TEXT
+        // MySQL overrides this with native SET
+        return 'TEXT';
+    }
 
     protected function autoIncrementKeyword(): string     { return 'AUTO_INCREMENT'; }
 

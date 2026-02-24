@@ -64,4 +64,18 @@ class PgSqlGrammar extends Grammar
     protected function typeBinary(array $col): string  { return 'BYTEA'; }
     protected function typeUuid(array $col): string    { return 'UUID'; }
     protected function autoIncrementKeyword(): string  { return ''; } // handled by SERIAL
+    protected function typeEnum(array $col): string
+    {
+        $quoted = implode(', ', array_map(
+            fn($v) => "'" . addslashes($v) . "'",
+            $col['values'] ?? []
+        ));
+        $colName = $col['name'];
+        return "VARCHAR(255) CHECK ({$colName} IN ({$quoted}))";
+    }
+
+    protected function typeSet(array $col): string
+    {
+        return 'TEXT';
+    }
 }

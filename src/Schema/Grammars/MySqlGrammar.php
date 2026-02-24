@@ -75,4 +75,21 @@ class MySqlGrammar extends Grammar
     protected function typeTinyInteger(array $col): string { return 'TINYINT'; }
     protected function typeJson(array $col): string { return 'JSON'; }
     protected function columnComment(string $comment): string { return "COMMENT '" . addslashes($comment) . "'"; }
+    protected function typeEnum(array $col): string
+    {
+        $values = implode(', ', array_map(
+            fn($v) => "'" . addslashes($v) . "'",
+            $col['values'] ?? []
+        ));
+        return "ENUM({$values})";
+    }
+
+    protected function typeSet(array $col): string
+    {
+        $values = implode(', ', array_map(
+            fn($v) => "'" . addslashes($v) . "'",
+            $col['values'] ?? []
+        ));
+        return "SET({$values})";
+    }
 }
