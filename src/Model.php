@@ -63,7 +63,7 @@ class Model
     protected bool $softDelete = false;
 
     /** @var string $deletedAtColumn */
-    protected string $deletedAtColumn = 'deleted_at';
+    protected string $deletedAtColumn = 'deleted';
 
     /** @var array<string,string> Casts. Example: ['column1' => 'int', 'column2' => 'string', [.....]] */
     protected array $casts = [];
@@ -720,7 +720,6 @@ class Model
             $col     = $this->sanitize($column);
         }
 
-        // Compare raw unquoted name — clean, no regex needed
         if ($colName === $this->id) {
             throw new ModelException("Not Possible To Increment Primary Key!");
         }
@@ -766,7 +765,6 @@ class Model
             $col     = $this->sanitize($column);
         }
 
-        // Compare raw unquoted name — clean, no regex needed
         if ($colName === $this->id) {
             throw new ModelException("Not Possible To Increment Primary Key!");
         }

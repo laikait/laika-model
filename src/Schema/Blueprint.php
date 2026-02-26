@@ -181,12 +181,12 @@ class Blueprint
     /** Add created_at and updated_at nullable timestamp columns. */
     public function timestamps(): void
     {
-        $this->timestamp('created_at')->nullable()->default(null);
-        $this->timestamp('updated_at')->nullable()->default(null);
+        $this->timestamp('created')->nullable()->default(null);
+        $this->timestamp('updated')->nullable()->default(null);
     }
 
     /** Add deleted_at nullable timestamp column for soft deletes. */
-    public function deleted(string $column = 'deleted_at'): ColumnDefinition
+    public function deleted(string $column = 'deleted'): ColumnDefinition
     {
         $res = $this->timestamp($column)->nullable();
         $this->index($column);
