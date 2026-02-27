@@ -853,7 +853,7 @@ class Model
             return $result;
         } catch (\Throwable $e) {
             $this->pdo->rollBack();
-            throw new \RuntimeException("Transaction Failed: " . $e->getMessage(), (int) $e->getCode(), $e);
+            throw new \RuntimeException("Table [{$this->table}] Transaction Failed [{$e->getMessage()}]", (int) $e->getCode(), $e);
         }
     }
 
