@@ -374,7 +374,7 @@ class Model
      * @param int|string $page Page Number. Default is Page Number 1
      * @return Model
      */
-    public function page(int|string $page = 1): Model
+    public function offset(int|string $page = 1): Model
     {
         $this->page = max(1, (int) $page);
         return $this;
@@ -834,7 +834,7 @@ class Model
             return "'" . addslashes($value) . "'";
         }, $sql);
 
-        return $sql;
+        return "{$sql};";
     }
 
     /**
