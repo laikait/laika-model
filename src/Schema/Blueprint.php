@@ -178,11 +178,15 @@ class Blueprint
         return $this->addColumn('timestamp', $name);
     }
 
-    /** Add created_at and updated_at nullable timestamp columns. */
-    public function timestamps(): void
+    /**
+     * Add 'created' & 'updated' Timestamp Columns.
+     * @param string $created Created Column Name. Default is 'created'
+     * @param string $updated Updated Column Name. Default is 'updated'
+     * */
+    public function timestamps(string $created = 'created', string $updated = 'updated'): void
     {
-        $this->timestamp('created')->nullable()->default(null);
-        $this->timestamp('updated')->nullable()->default(null);
+        $this->timestamp($created)->default(fn () => 'CURRENT_TIMESTAMP');
+        $this->timestamp($updated)->default(fn () => 'CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
     }
 
     /** Add deleted_at nullable timestamp column for soft deletes. */
