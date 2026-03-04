@@ -175,7 +175,7 @@ class Blueprint
 
     public function timestamp(string $name): ColumnDefinition
     {
-        return $this->addColumn('timestamp', $name);
+        return $this->addColumn('timestamp', $name)->default(fn () => 'CURRENT_TIMESTAMP');
     }
 
     /**
