@@ -1097,8 +1097,8 @@ class Model
 
     private function validate(string $name): string
     {
-        if (!preg_match('/^[a-zA-Z_][a-zA-Z0-9_]*$/', $name)) {
-            throw new ModelException("Invalid identifier [{$name}].");
+        if (!preg_match('/^[a-zA-Z_][a-zA-Z0-9_\s\.]*$/', $name)) {
+            throw new ModelException("Invalid Identifier [{$name}].");
         }
         return $name;
     }
