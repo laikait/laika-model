@@ -148,7 +148,7 @@ abstract class Grammar
         if (is_null($value))        return  'NULL';
         if (is_bool($value))        return  $value ? '1' : '0';
         if (is_numeric($value))     return  (string) $value;
-        if (is_callable($value))    return  (string) $value();
+        if (is_callable($value))    return  addslashes((string) $value());
         return "'" . addslashes((string)$value) . "'";
     }
 
