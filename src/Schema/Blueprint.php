@@ -131,7 +131,7 @@ class Blueprint
 
     public function serialize(string $name): ColumnDefinition
     {
-        return $this->addColumn('text', $name);
+        return $this->addColumn('longtext', $name);
     }
 
     public function char(string $name, int $length = 36): ColumnDefinition
@@ -186,7 +186,7 @@ class Blueprint
     public function timestamps(string $created = 'created', string $updated = 'updated'): void
     {
         $this->timestamp($created)->default(fn () => 'CURRENT_TIMESTAMP');
-        $this->timestamp($updated)->default(fn () => 'CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
+        $this->timestamp($updated)->nullable()->default(fn () => 'NULL ON UPDATE CURRENT_TIMESTAMP');
     }
 
     /** Add deleted_at nullable timestamp column for soft deletes. */
