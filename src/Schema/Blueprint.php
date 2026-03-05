@@ -242,9 +242,16 @@ class Blueprint
         return $this;
     }
 
-    public function foreign(string $column): ForeignKeyDefinition
+    // public function foreign(string $column): ForeignKeyDefinition
+    // {
+    //     $fk = new ForeignKeyDefinition($column);
+    //     $this->foreignKeys[] = &$fk->getDefinition();
+    //     return $fk;
+    // }
+
+    public function foreign(string $column, ?string $name = null): ForeignKeyDefinition
     {
-        $fk = new ForeignKeyDefinition($column);
+        $fk = new ForeignKeyDefinition($column, $name);
         $this->foreignKeys[] = &$fk->getDefinition();
         return $fk;
     }

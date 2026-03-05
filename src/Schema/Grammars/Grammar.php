@@ -165,14 +165,16 @@ abstract class Grammar
 
         // Unique
         foreach ($blueprint->getUniques() as $unique) {
-            $name = $unique['name'] ?? 'uq_' . implode('_', $unique['columns']);
+            $base = $unique['name'] ?? implode('_', $unique['columns']);
+            $name = 'uq_' . ltrim($base, 'uq_');
             $cols = implode(', ', array_map([$this, 'wrapColumn'], $unique['columns']));
             $lines[] = "CONSTRAINT {$this->wrapColumn($name)} UNIQUE ({$cols})";
         }
 
         // Indexes (added separately via ALTER in some dbs; here inline for simplicity)
         foreach ($blueprint->getIndexes() as $index) {
-            $name = $index['name'] ?? 'idx_' . implode('_', $index['columns']);
+            $base = $index['name'] ?? implode('_', $index['columns']);
+            $name = 'idx_' . ltrim($base, 'idx_');
             $cols = implode(', ', array_map([$this, 'wrapColumn'], $index['columns']));
             $lines[] = "INDEX {$this->wrapColumn($name)} ({$cols})";
         }
@@ -181,7 +183,8 @@ abstract class Grammar
         foreach ($blueprint->getForeignKeys() as $fk) {
             $col  = $this->wrapColumn($fk['column']);
             $ref  = $this->wrapTable($fk['referenceTable']) . '(' . $this->wrapColumn($fk['referenceColumn']) . ')';
-            $name = $fk['name'] ?? 'fk_' . $fk['column'];
+            $base = $fk['name'] ?? $fk['column'];
+            $name = 'fk_' . ltrim($base, 'fk_');
             $line = "CONSTRAINT {$this->wrapColumn($name)} FOREIGN KEY ({$col}) REFERENCES {$ref}";
             if (!empty($fk['onDelete'])) $line .= " ON DELETE {$fk['onDelete']}";
             if (!empty($fk['onUpdate'])) $line .= " ON UPDATE {$fk['onUpdate']}";

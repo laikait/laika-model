@@ -11,12 +11,24 @@ class ForeignKeyDefinition
 {
     private array $definition;
 
+    // /**
+    //  * @param string $column Column Name
+    //  */
+    // public function __construct(string $column)
+    // {
+    //     $this->definition = ['column' => $column];
+    // }
+
     /**
-     * @param string $column Column Name
+     * @param string      $column Column Name
+     * @param string|null $name   Optional constraint name
      */
-    public function __construct(string $column)
+    public function __construct(string $column, ?string $name = null)
     {
         $this->definition = ['column' => $column];
+        if ($name !== null) {
+            $this->definition['name'] = $name ?: $column;
+        }
     }
 
     /**
