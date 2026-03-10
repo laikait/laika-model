@@ -63,7 +63,7 @@ class Model
     protected bool $softDelete = false;
 
     /** @var string $deletedAtColumn */
-    protected string $deletedAtColumn = 'deleted';
+    protected string $deletedAtColumn = 'deleted_at';
 
     /** @var array<string,string> Casts. Example: ['column1' => 'int', 'column2' => 'string', [.....]] */
     protected array $casts = [];

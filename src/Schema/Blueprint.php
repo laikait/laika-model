@@ -305,12 +305,12 @@ class Blueprint
     /**
      * Timestamps.
      * Add 'created' & 'updated' Timestamp Columns.
-     * @param string $created Created Column Name. Default is 'created'
-     * @param string $updated Updated Column Name. Default is 'updated'
+     * @param string $created Created Column Name. Default is 'created_at'
+     * @param string $updated Updated Column Name. Default is 'updated_at'
      * 'default' Column is Nullable
      * @return void
      * */
-    public function timestamps(string $created = 'created', string $updated = 'updated'): void
+    public function timestamps(string $created = 'created_at', string $updated = 'updated_at'): void
     {
         $this->timestamp($created)->default(fn () => 'CURRENT_TIMESTAMP');
         $this->timestamp($updated)->nullable()->default(fn () => 'NULL ON UPDATE CURRENT_TIMESTAMP');
@@ -318,10 +318,10 @@ class Blueprint
 
     /**
      * Deleted At Column
-     * @param string $name Column Name. Default is 'deleted'
+     * @param string $name Column Name. Default is 'deleted_at'
      * @return ColumnDefinition
      */
-    public function deleted(string $column = 'deleted'): ColumnDefinition
+    public function deleted(string $column = 'deleted_at'): ColumnDefinition
     {
         $res = $this->timestamp($column)->nullable()->default(null);
         $this->index($column);
