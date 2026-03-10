@@ -114,14 +114,23 @@ class Model
             $this->columns = '*';
             return $this;
         }
-        // Add Backtick
-        $array = explode(',', $columns);
+        // Split on commas that are NOT inside parentheses (e.g. CONCAT(a, b))
+        $array = preg_split('/,(?![^(]*\))/', $columns);
         // Trim & Quote Columns
         $trimed = array_map(function($v) {
             $v = trim($v);
-            return $this->sanitize($v);
+            // Handle AS alias: "expr AS alias" or "expr as alias"
+            if (preg_match('/^(.+?)\s+[Aa][Ss]\s+(\S+)$/', $v, $m)) {
+                $expr  = trim($m[1]);
+                $alias = trim($m[2]);
+                // Expression (contains parentheses) — pass through, only sanitize alias
+                $left = str_contains($expr, '(') ? $expr : $this->sanitize($expr);
+                return $left . ' AS ' . $this->sanitize($alias);
+            }
+            // Plain expression without alias — pass through if it contains parentheses
+            return str_contains($v, '(') ? $v : $this->sanitize($v);
         }, $array);
-        $this->columns = implode(',', $trimed);
+        $this->columns = implode(', ', $trimed);
         return $this;
     }
 
@@ -1097,7 +1106,7 @@ class Model
 
     private function validate(string $name): string
     {
-        if (!preg_match('/^[a-zA-Z_][a-zA-Z0-9_\s\.]*$/', $name)) {
+        if (!preg_match('/^[a-zA-Z_][a-zA-Z0-9_\.]*$/', $name)) {
             throw new ModelException("Invalid Identifier [{$name}].");
         }
         return $name;
