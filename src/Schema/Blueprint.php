@@ -299,16 +299,6 @@ class Blueprint
      */
     public function timestamp(string $name): ColumnDefinition
     {
-        return $this->addColumn('timestamp', $name);
-    }
-
-    /**
-     * Current Timestamp Column
-     * @param string $name Column Name
-     * @return ColumnDefinition
-     */
-    public function currentTimestamp(string $name): ColumnDefinition
-    {
         return $this->addColumn('timestamp', $name)->default(fn () => 'CURRENT_TIMESTAMP');
     }
 
