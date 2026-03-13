@@ -119,7 +119,7 @@ abstract class Grammar
     protected function typeTimestamp(array $col): string  { return 'TIMESTAMP'; }
     protected function typeJson(array $col): string       { return 'JSON'; }
     protected function typeBinary(array $col): string     { return 'BLOB'; }
-    protected function typeUid(array $col): string       { return 'CHAR(38)'; }
+    protected function typeUid(array $col): string       { return 'VARCHAR(38)'; }
     protected function typeEnum(array $col): string
     {
         // Default fallback for drivers without native ENUM
