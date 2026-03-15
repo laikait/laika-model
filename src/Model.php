@@ -1,5 +1,4 @@
 <?php
-
 /**
  * Laika Database Model
  * Author: Showket Ahmed
@@ -555,7 +554,7 @@ class Model
             foreach ($chunk as $row) {
                 // Ensure row structure consistency
                 if (array_keys($row) !== $keys) {
-                    throw new \InvalidArgumentException('All insert rows must have identical columns.');
+                    throw new \InvalidArgumentException('All Insert Rows Must Have Identical Columns.');
                 }
                 $bindings = array_merge($bindings, array_values($row));
             }
@@ -565,7 +564,7 @@ class Model
                 $stmt = $this->pdo->prepare($sql);
                 $stmt->execute($bindings);
             } catch (\Throwable $th) {
-                throw new \RuntimeException($th->getMessage());
+                throw new \RuntimeException($th->getMessage(), (int) $th->getCode(), $th);
             }
         }
 
