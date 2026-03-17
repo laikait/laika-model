@@ -104,14 +104,16 @@ class Model
 
     /**
      * Select
-     * @param ?string $columns Column names. Default is null
+     * @param array|string|null $columns Column names. Default is null
      * @return Model
      */
-    public function select(?string $columns = null): Model
+    public function select(array|string|null $columns = null): Model
     {
-        if (empty($columns) || trim($columns) == '*') {
+        if (empty($columns)) {
             $this->columns = '*';
             return $this;
+        } elseif (is_array($columns)) {
+            $columns = implode(', ', $columns);
         }
         // Split on commas that are NOT inside parentheses (e.g. CONCAT(a, b))
         $array = preg_split('/,(?![^(]*\))/', $columns);
