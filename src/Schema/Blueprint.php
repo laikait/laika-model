@@ -34,43 +34,83 @@ class Blueprint
     // Integer types
     // -----------------------------------------------------------------------
 
+    /**
+     * Primary Int Column With Auto Increment
+     * @param string $name Column Name
+     * @return ColumnDefinition
+     */
     public function id(string $name = 'id'): ColumnDefinition
     {
         $this->primaryKey = [$name];
         return $this->addColumn('id', $name, ['auto_increment' => true, 'unsigned' => true]);
     }
 
+    /**
+     * Primary BigInt Column With Auto Increment
+     * @param string $name Column Name
+     * @return ColumnDefinition
+     */
     public function bigId(string $name = 'id'): ColumnDefinition
     {
         $this->primaryKey = [$name];
         return $this->addColumn('bigId', $name, ['auto_increment' => true, 'unsigned' => true]);
     }
 
+    /**
+     * Integer Column
+     * @param string $name Column Name
+     * @return ColumnDefinition
+     */
     public function integer(string $name): ColumnDefinition
     {
         return $this->addColumn('integer', $name);
     }
 
+    /**
+     * Big Integer Column
+     * @param string $name Column Name
+     * @return ColumnDefinition
+     */
     public function bigInteger(string $name): ColumnDefinition
     {
         return $this->addColumn('bigInteger', $name);
     }
 
+    /**
+     * Small Integer Column
+     * @param string $name Column Name
+     * @return ColumnDefinition
+     */
     public function smallInteger(string $name): ColumnDefinition
     {
         return $this->addColumn('smallInteger', $name);
     }
 
+    /**
+     * Tiny Integer Column
+     * @param string $name Column Name
+     * @return ColumnDefinition
+     */
     public function tinyInteger(string $name): ColumnDefinition
     {
         return $this->addColumn('tinyInteger', $name);
     }
 
+    /**
+     * Unsigned Integer Column
+     * @param string $name Column Name
+     * @return ColumnDefinition
+     */
     public function unsignedInteger(string $name): ColumnDefinition
     {
         return $this->integer($name)->unsigned();
     }
 
+    /**
+     * Unsigned Big Integer Column
+     * @param string $name Column Name
+     * @return ColumnDefinition
+     */
     public function unsignedBigInteger(string $name): ColumnDefinition
     {
         return $this->bigInteger($name)->unsigned();
@@ -80,16 +120,31 @@ class Blueprint
     // Decimal / float
     // -----------------------------------------------------------------------
 
+    /**
+     * Float Column
+     * @param string $name Column Name
+     * @return ColumnDefinition
+     */
     public function float(string $name): ColumnDefinition
     {
         return $this->addColumn('float', $name);
     }
 
+    /**
+     * Double Column
+     * @param string $name Column Name
+     * @return ColumnDefinition
+     */
     public function double(string $name): ColumnDefinition
     {
         return $this->addColumn('double', $name);
     }
 
+    /**
+     * Decomal Column
+     * @param string $name Column Name
+     * @return ColumnDefinition
+     */
     public function decimal(string $name, int $precision = 8, int $scale = 2): ColumnDefinition
     {
         return $this->addColumn('decimal', $name, ['precision' => $precision, 'scale' => $scale]);
@@ -99,6 +154,11 @@ class Blueprint
     // Boolean
     // -----------------------------------------------------------------------
 
+    /**
+     * Boolean Column
+     * @param string $name Column Name
+     * @return ColumnDefinition
+     */
     public function boolean(string $name): ColumnDefinition
     {
         return $this->addColumn('boolean', $name);
@@ -108,11 +168,23 @@ class Blueprint
     // String / text
     // -----------------------------------------------------------------------
 
+    /**
+     * Varchar Column
+     * @param string $name Column Name
+     * @param int $length Column Length. Default is 255
+     * @return ColumnDefinition
+     */
     public function string(string $name, int $length = 255): ColumnDefinition
     {
         return $this->addColumn('string', $name, ['length' => $length]);
     }
 
+    /**
+     * Enum Column
+     * @param $name Column Name
+     * @param array{int:string} $values Enum Values
+     * @return ColumnDefinition
+     */
     public function enum(string $name, array $values): ColumnDefinition
     {
         if (empty($values)) {
@@ -121,6 +193,12 @@ class Blueprint
         return $this->addColumn('enum', $name, ['values' => array_values($values)]);
     }
 
+    /**
+     * Set Column
+     * @param string $name Column Name
+     * @param array{int:string} $values Set Values
+     * @return ColumnDefinition
+     */
     public function set(string $name, array $values): ColumnDefinition
     {
         if (empty($values)) {
@@ -129,26 +207,52 @@ class Blueprint
         return $this->addColumn('set', $name, ['values' => array_values($values)]);
     }
 
+    /**
+     * Serialize Column
+     * @param string $name Column Name
+     * @return ColumnDefinition
+     */
     public function serialize(string $name): ColumnDefinition
     {
-        return $this->addColumn('text', $name);
+        return $this->addColumn('longtext', $name);
     }
 
+    /**
+     * Char Column
+     * @param string $name Column Name
+     * @param string $length Column Length. Default is 36
+     * @return ColumnDefinition
+     */
     public function char(string $name, int $length = 36): ColumnDefinition
     {
         return $this->addColumn('char', $name, ['length' => $length]);
     }
 
+    /**
+     * Text Column
+     * @param string $name Column Name
+     * @return ColumnDefinition
+     */
     public function text(string $name): ColumnDefinition
     {
         return $this->addColumn('text', $name);
     }
 
+    /**
+     * Medium Text Column
+     * @param string $name Column Name
+     * @return ColumnDefinition
+     */
     public function mediumText(string $name): ColumnDefinition
     {
         return $this->addColumn('mediumText', $name);
     }
 
+    /**
+     * Long Text Column
+     * @param string $name Column Name
+     * @return ColumnDefinition
+     */
     public function longText(string $name): ColumnDefinition
     {
         return $this->addColumn('longText', $name);
@@ -158,68 +262,129 @@ class Blueprint
     // Date / time
     // -----------------------------------------------------------------------
 
+    /**
+     * Date Column
+     * @param string $name Column Name
+     * @return ColumnDefinition
+     */
     public function date(string $name): ColumnDefinition
     {
         return $this->addColumn('date', $name);
     }
 
+    /**
+     * Time Column
+     * @param string $name Column Name
+     * @return ColumnDefinition
+     */
     public function time(string $name): ColumnDefinition
     {
         return $this->addColumn('time', $name);
     }
 
+    /**
+     * Datetime Column
+     * @param string $name Column Name
+     * @return ColumnDefinition
+     */
     public function dateTime(string $name): ColumnDefinition
     {
         return $this->addColumn('dateTime', $name);
     }
 
+    /**
+     * Timestamp Column
+     * @param string $name Column Name
+     * @return ColumnDefinition
+     */
     public function timestamp(string $name): ColumnDefinition
     {
-        return $this->addColumn('timestamp', $name);
+        return $this->addColumn('timestamp', $name)->default(fn () => 'CURRENT_TIMESTAMP');
     }
 
-    /** Add created_at and updated_at nullable timestamp columns. */
-    public function timestamps(): void
+    /**
+     * Timestamps.
+     * Add 'created' & 'updated' Timestamp Columns.
+     * @param string $created Created Column Name. Default is 'created_at'
+     * @param string $updated Updated Column Name. Default is 'updated_at'
+     * 'default' Column is Nullable
+     * @return void
+     * */
+    public function timestamps(string $created = 'created_at', string $updated = 'updated_at'): void
     {
-        $this->timestamp('created_at')->nullable()->default(null);
-        $this->timestamp('updated_at')->nullable()->default(null);
+        $this->timestamp($created)->default(fn () => 'CURRENT_TIMESTAMP');
+        $this->timestamp($updated)->nullable()->default(fn () => 'NULL ON UPDATE CURRENT_TIMESTAMP');
     }
 
-    /** Add deleted_at nullable timestamp column for soft deletes. */
+    /**
+     * Deleted At Column
+     * @param string $name Column Name. Default is 'deleted_at'
+     * @return ColumnDefinition
+     */
     public function deleted(string $column = 'deleted_at'): ColumnDefinition
     {
-        return $this->timestamp($column)->nullable()->default(null);
+        $res = $this->timestamp($column)->nullable()->default(null);
+        $this->index($column);
+        return $res;
     }
 
     // -----------------------------------------------------------------------
     // Other types
     // -----------------------------------------------------------------------
 
+    /**
+     * JSON Column
+     * @param string $name Column Name
+     * @return ColumnDefinition
+     */
     public function json(string $name): ColumnDefinition
     {
         return $this->addColumn('json', $name);
     }
 
+    /**
+     * Binary Column
+     * @param string $name Column Name
+     * @return ColumnDefinition
+     */
     public function binary(string $name): ColumnDefinition
     {
         return $this->addColumn('binary', $name);
     }
 
+    /**
+     * UID Column
+     * @param string $name Column Name
+     * @return ColumnDefinition
+     */
     public function uid(string $name = 'uid'): ColumnDefinition
     {
-        return $this->addColumn('uid', $name);
+        $res = $this->addColumn('uid', $name);
+        $this->unique($name);
+        return $res;
     }
 
     // -----------------------------------------------------------------------
     // Constraints
     // -----------------------------------------------------------------------
 
-    public function primary(array $columns): self
+    /**
+     * Primary Column(s)
+     * @param array|string $columns Column Name(s)
+     * @return self
+     */
+    public function primary(array|string $columns): self
     {
-        $this->primaryKey = $columns;
+        $this->primaryKey = is_array($columns) ? $columns : [$columns];
         return $this;
     }
 
+    /**
+     * Unique Column(s)
+     * @param array|string $columns Column Name(s)
+     * @param ?string $name Unique Name
+     * @return self
+     */
     public function unique(array|string $columns, ?string $name = null): self
     {
         $columns = (array)$columns;
@@ -227,6 +392,12 @@ class Blueprint
         return $this;
     }
 
+    /**
+     * Index Column(s)
+     * @param array|string $columns Column Name(s)
+     * @param ?string $name Index Name
+     * @return self
+     */
     public function index(array|string $columns, ?string $name = null): self
     {
         $columns = (array)$columns;
@@ -234,17 +405,20 @@ class Blueprint
         return $this;
     }
 
-    public function foreign(string $column): ForeignKeyDefinition
+    /**
+     * Foreign Column
+     * @param string $columns Column Name
+     * @param ?string $name Index Name
+     * @return ForeignKeyDefinition
+     */
+    public function foreign(string $column, ?string $name = null): ForeignKeyDefinition
     {
-        $fk = new ForeignKeyDefinition($column);
+        $fk = new ForeignKeyDefinition($column, $name);
         $this->foreignKeys[] = &$fk->getDefinition();
         return $fk;
     }
 
-    // -----------------------------------------------------------------------
-    // Getters
-    // -----------------------------------------------------------------------
-
+    /*================================ PARAMETER GETTERS ================================*/
     public function getTable(): string       { return $this->table; }
     public function getColumns(): array      { return $this->columns; }
     public function getPrimaryKey(): array   { return $this->primaryKey; }
@@ -253,10 +427,7 @@ class Blueprint
     public function getForeignKeys(): array  { return $this->foreignKeys; }
     public function getOption(string $key): mixed { return $this->options[$key] ?? null; }
 
-    // -----------------------------------------------------------------------
-    // Internal
-    // -----------------------------------------------------------------------
-
+    /*=============================== INTERNAL API ===============================*/
     private function addColumn(string $type, string $name, array $extra = []): ColumnDefinition
     {
         $def = new ColumnDefinition(array_merge(['type' => $type, 'name' => $name], $extra));

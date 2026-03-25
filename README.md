@@ -222,16 +222,16 @@ $read  = new User('read');     // uses 'read' connection
 
 ```php
 // All columns (default)
-$users->table('users')->get();
+$users->get();
 
 // Specific columns
-$users->table('users')->select('id, name, email')->get();
+$users->select('id, name, email')->get();
 
 // All columns
-$users->table('users')->select('*')->get();
+$users->select('*')->get();
 
 // Distinct rows
-$users->table('users')->select('role')->distinct()->get();
+$users->select('role')->distinct()->get();
 ```
 
 ---
@@ -242,40 +242,40 @@ All column names are validated and quoted. All values are bound via prepared sta
 
 ```php
 // Equality (default operator)
-$users->table('users')->where(['active' => 1])->get();
+$users->where(['active' => 1])->get();
 
 // Custom operator
-$users->table('users')->where(['credits' => 100], '>')->get();
+$users->where(['credits' => 100], '>')->get();
 
 // Supported operators: =  !=  <>  <  >  <=  >=  LIKE  NOT LIKE
-$users->table('users')->where(['name' => '%alice%'], 'LIKE')->get();
+$users->where(['name' => '%alice%'], 'LIKE')->get();
 
 // Not equal shorthand
-$users->table('users')->whereNot(['role' => 'banned'])->get();
+$users->whereNot(['role' => 'banned'])->get();
 
 // IN list
-$users->table('users')->whereIn('id', [1, 2, 3])->get();
+$users->whereIn('id', [1, 2, 3])->get();
 
 // NOT IN list
-$users->table('users')->whereNotIn('role', ['banned', 'spam'])->get();
+$users->whereNotIn('role', ['banned', 'spam'])->get();
 
 // IS NULL
-$users->table('users')->isNull('deleted_at')->get();
+$users->isNull('deleted_at')->get();
 
 // IS NOT NULL
-$users->table('users')->notNull('email')->get();
+$users->notNull('email')->get();
 
 // BETWEEN
-$users->table('users')->between('credits', 10, 100)->get();
+$users->between('credits', 10, 100)->get();
 
 // AND / OR combining
-$users->table('users')
+$users
     ->where(['active' => 1])
     ->where(['role' => 'admin'], '=', 'OR')
     ->get();
 
 // Grouped conditions — (a AND b) OR (c AND d)
-$users->table('users')
+$users
     ->whereGroup(function (Model $m) {
         $m->where(['role' => 'admin'])->where(['active' => 1]);
     })
@@ -291,22 +291,22 @@ $users->table('users')
 
 ```php
 // Order by single column
-$users->table('users')->order('created_at', 'DESC')->get();
+$users->order('created_at', 'DESC')->get();
 
 // Order by multiple columns
-$users->table('users')
+$users
     ->order('role', 'ASC')
     ->order('created_at', 'DESC')
     ->get();
 
 // Limit
-$users->table('users')->limit(10)->get();
+$users->limit(10)->get();
 
 // Pagination — page() takes a PAGE NUMBER, not a row offset
 // Page 1 = rows 1–10, Page 2 = rows 11–20, etc.
-$users->table('users')->limit(10)->page(1)->get(); // page 1
-$users->table('users')->limit(10)->page(2)->get(); // page 2
-$users->table('users')->limit(10)->page(3)->get(); // page 3
+$users->limit(10)->page(1)->get(); // page 1
+$users->limit(10)->page(2)->get(); // page 2
+$users->limit(10)->page(3)->get(); // page 3
 ```
 
 ---
@@ -315,23 +315,23 @@ $users->table('users')->limit(10)->page(3)->get(); // page 3
 
 ```php
 // LEFT JOIN (default)
-$users->table('users')
+$users
     ->join('posts', 'users.id', '=', 'posts.user_id')
     ->select('users.name, posts.title')
     ->get();
 
 // INNER JOIN
-$users->table('users')
+$users
     ->join('orders', 'users.id', '=', 'orders.user_id', 'INNER')
     ->get();
 
 // RIGHT JOIN
-$users->table('users')
+$users
     ->join('profiles', 'users.id', '=', 'profiles.user_id', 'RIGHT')
     ->get();
 
 // Multiple joins
-$users->table('users')
+$users
     ->join('posts', 'users.id', '=', 'posts.user_id')
     ->join('comments', 'posts.id', '=', 'comments.post_id', 'INNER')
     ->select('users.name, posts.title, comments.body')
@@ -344,22 +344,22 @@ $users->table('users')
 
 ```php
 // Count all rows
-$total = $users->table('users')->count();
+$total = $users->count();
 
 // Count with condition
-$active = $users->table('users')->where(['active' => 1])->count();
+$active = $users->where(['active' => 1])->count();
 
 // Check existence
-$exists = $users->table('users')->where(['email' => 'alice@example.com'])->exists();
+$exists = $users->where(['email' => 'alice@example.com'])->exists();
 
 // First matching row — requires WHERE clause
-$user = $users->table('users')->where(['id' => 1])->first();
+$user = $users->where(['id' => 1])->first();
 
 // First or throw RuntimeException
-$user = $users->table('users')->where(['id' => 1])->firstOrFail();
+$user = $users->where(['id' => 1])->firstOrFail();
 
 // Single column from all matching rows
-$emails = $users->table('users')->where(['active' => 1])->pluck('email');
+$emails = $users->where(['active' => 1])->pluck('email');
 // ['alice@example.com', 'bob@example.com', ...]
 
 // Group By with Having
@@ -376,7 +376,7 @@ $users->table('orders')
 
 ```php
 // Single row — returns last inserted ID
-$id = $users->table('users')->insert([
+$id = $users->insert([
     'name'   => 'Alice',
     'email'  => 'alice@example.com',
     'active' => 1,
@@ -384,7 +384,7 @@ $id = $users->table('users')->insert([
 
 // Multiple rows — returns last inserted ID
 // Automatically chunked into batches of 1000
-$users->table('users')->insert([
+$users->insert([
     ['name' => 'Bob',   'email' => 'bob@example.com'],
     ['name' => 'Carol', 'email' => 'carol@example.com'],
     ['name' => 'Dave',  'email' => 'dave@example.com'],
@@ -401,17 +401,17 @@ Update requires a WHERE clause. Calling `update()` without one throws `InvalidAr
 
 ```php
 // Update single row
-$affected = $users->table('users')
+$affected = $users
     ->where(['id' => 1])
     ->update(['name' => 'Alice Smith', 'active' => 1]);
 
 // Update multiple rows
-$affected = $users->table('users')
+$affected = $users
     ->where(['role' => 'guest'])
     ->update(['active' => 0]);
 
 // Update with JOIN
-$affected = $users->table('users')
+$affected = $users
     ->join('profiles', 'users.id', '=', 'profiles.user_id')
     ->where(['users.active' => 0])
     ->update(['users.deleted_at' => date('Y-m-d H:i:s')]);
@@ -425,10 +425,10 @@ Delete requires a WHERE clause. Calling `delete()` without one throws `InvalidAr
 
 ```php
 // Hard delete
-$affected = $users->table('users')->where(['id' => 1])->delete();
+$affected = $users->where(['id' => 1])->delete();
 
 // Delete multiple
-$affected = $users->table('users')->whereIn('id', [4, 5, 6])->delete();
+$affected = $users->whereIn('id', [4, 5, 6])->delete();
 ```
 
 ---
@@ -439,16 +439,16 @@ Mark rows as deleted by setting a `deleted_at` timestamp instead of removing the
 
 ```php
 // Soft delete — sets deleted_at to current timestamp
-$users->table('users')->where(['id' => 1])->soft()->delete();
+$users->where(['id' => 1])->soft()->delete();
 
 // Restore — sets deleted_at back to null
-$users->table('users')->where(['id' => 1])->restore();
+$users->where(['id' => 1])->restore();
 
 // Query only soft-deleted rows
-$users->table('users')->withTrash()->get();
+$users->withTrash()->get();
 
 // Query only non-deleted rows
-$users->table('users')->withoutTrash()->get();
+$users->withoutTrash()->get();
 ```
 
 Override the soft delete column in your model:
@@ -463,16 +463,16 @@ protected string $deletedAtColumn = 'removed_at';
 
 ```php
 // Increment login_count by 1 for a specific user
-$users->table('users')->where(['id' => 1])->increment('login_count');
+$users->where(['id' => 1])->increment('login_count');
 
 // Increment by a custom amount
-$users->table('users')->where(['id' => 1])->increment('credits', 50);
+$users->where(['id' => 1])->increment('credits', 50);
 
 // Decrement
-$users->table('users')->where(['id' => 1])->decrement('credits', 10);
+$users->where(['id' => 1])->decrement('credits', 10);
 
 // Using table.column notation
-$users->table('users')->where(['id' => 1])->increment('users.views', 1);
+$users->where(['id' => 1])->increment('users.views', 1);
 ```
 
 Both methods require a WHERE clause.
@@ -484,7 +484,7 @@ Both methods require a WHERE clause.
 Process large result sets without loading all rows into memory at once.
 
 ```php
-$users->table('users')->where(['active' => 1])->chunk(100, function (array $rows) {
+$users->where(['active' => 1])->chunk(100, function (array $rows) {
     foreach ($rows as $row) {
         // process each row
     }
@@ -499,7 +499,7 @@ Each chunk is fetched in a separate query. The loop stops automatically when no 
 
 ```php
 $users->transaction(function (Model $model) {
-    $id = $model->table('users')->insert(['name' => 'Alice', 'email' => 'a@b.com']);
+    $id = $model->insert(['name' => 'Alice', 'email' => 'a@b.com']);
     $model->table('orders')->insert(['user_id' => $id, 'total' => 99.99]);
 });
 ```
@@ -535,7 +535,7 @@ $rows = $users->execute(
 Preview the SQL that would be executed with bindings filled in. Does not execute anything.
 
 ```php
-$sql = $users->table('users')
+$sql = $users
     ->where(['active' => 1])
     ->order('created_at', 'DESC')
     ->limit(10)
@@ -552,11 +552,11 @@ echo $sql;
 Generate a unique, collision-safe string ID and verify it does not already exist in the database.
 
 ```php
-$uid = $users->table('users')->uid();
+$uid = $users->uid();
 // Returns: "UID-A1B2C3-D4E5F6-G7H8I9-J0K1L2-483920"
 
 // Custom max attempts (default 10)
-$uid = $users->table('users')->uid(5);
+$uid = $users->uid(5);
 ```
 
 Override the UID column name in your model:
@@ -596,7 +596,7 @@ Casting is applied automatically on `get()`, `first()`, `firstOrFail()`, `chunk(
 **Note:** Values must be serialized manually before `insert()` / `update()`:
 
 ```php
-$users->table('users')->where(['id' => 1])->update([
+$users->where(['id' => 1])->update([
     'preferences' => json_encode(['theme' => 'dark']),
     'permissions' => serialize(['read', 'write']),
 ]);

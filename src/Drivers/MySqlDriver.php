@@ -39,6 +39,7 @@ class MySqlDriver extends AbstractDriver
     {
         return parent::getOptions($config) + [
             \PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES '{$this->getCharset($config)}'",
+            \PDO::MYSQL_ATTR_INIT_COMMAND => "SET time_zone = '+00:00'",
         ];
     }
 }

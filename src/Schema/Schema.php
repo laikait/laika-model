@@ -84,7 +84,7 @@ class Schema
         try {
             $this->pdo()->exec($sql);
         } catch (\Throwable $th) {
-            throw new SchemaException("Schema Error In Query [{$sql}]", (int) $th->getCode(), $th);
+            throw new SchemaException("Schema Error In Query [{$sql}]. {$th->getMessage()}.", (int) $th->getCode(), $th);
         }
     }
 

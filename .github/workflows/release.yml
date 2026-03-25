@@ -68,7 +68,7 @@ jobs:
           restore-keys: ${{ runner.os }}-composer-
 
       - name: Setup PHP
-        uses: shivammathur/setup-php@v2
+        uses: shivammathur/setup-php@44454db4f0199b8b9685a5d763dc37cbf79108e1 # v2
         with:
           php-version: ${{ matrix.php-version }}
           extensions: mbstring, json, dom
@@ -217,7 +217,7 @@ jobs:
           path: laika-model.zip
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
         with:
           tag_name: ${{ github.ref_name }}
           name: "Release ${{ github.ref_name }}"

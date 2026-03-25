@@ -119,7 +119,7 @@ abstract class Grammar
     protected function typeTimestamp(array $col): string  { return 'TIMESTAMP'; }
     protected function typeJson(array $col): string       { return 'JSON'; }
     protected function typeBinary(array $col): string     { return 'BLOB'; }
-    protected function typeUid(array $col): string       { return 'CHAR(38)'; }
+    protected function typeUid(array $col): string       { return 'VARCHAR(38)'; }
     protected function typeEnum(array $col): string
     {
         // Default fallback for drivers without native ENUM
@@ -145,9 +145,10 @@ abstract class Grammar
 
     protected function formatDefault(mixed $value): string
     {
-        if (is_null($value))   return 'NULL';
-        if (is_bool($value))   return $value ? '1' : '0';
-        if (is_numeric($value)) return (string) $value;
+        if (is_null($value))        return  'NULL';
+        if (is_bool($value))        return  $value ? '1' : '0';
+        if (is_numeric($value))     return  (string) $value;
+        if (is_callable($value))    return  addslashes((string) $value());
         return "'" . addslashes((string)$value) . "'";
     }
 
@@ -164,14 +165,16 @@ abstract class Grammar
 
         // Unique
         foreach ($blueprint->getUniques() as $unique) {
-            $name = $unique['name'] ?? 'uq_' . implode('_', $unique['columns']);
+            $base = $unique['name'] ?? implode('_', $unique['columns']);
+            $name = 'uq_' . ltrim($base, 'uq_');
             $cols = implode(', ', array_map([$this, 'wrapColumn'], $unique['columns']));
             $lines[] = "CONSTRAINT {$this->wrapColumn($name)} UNIQUE ({$cols})";
         }
 
         // Indexes (added separately via ALTER in some dbs; here inline for simplicity)
         foreach ($blueprint->getIndexes() as $index) {
-            $name = $index['name'] ?? 'idx_' . implode('_', $index['columns']);
+            $base = $index['name'] ?? implode('_', $index['columns']);
+            $name = 'idx_' . ltrim($base, 'idx_');
             $cols = implode(', ', array_map([$this, 'wrapColumn'], $index['columns']));
             $lines[] = "INDEX {$this->wrapColumn($name)} ({$cols})";
         }
@@ -180,7 +183,8 @@ abstract class Grammar
         foreach ($blueprint->getForeignKeys() as $fk) {
             $col  = $this->wrapColumn($fk['column']);
             $ref  = $this->wrapTable($fk['referenceTable']) . '(' . $this->wrapColumn($fk['referenceColumn']) . ')';
-            $name = $fk['name'] ?? 'fk_' . $fk['column'];
+            $base = $fk['name'] ?? $fk['column'];
+            $name = 'fk_' . ltrim($base, 'fk_');
             $line = "CONSTRAINT {$this->wrapColumn($name)} FOREIGN KEY ({$col}) REFERENCES {$ref}";
             if (!empty($fk['onDelete'])) $line .= " ON DELETE {$fk['onDelete']}";
             if (!empty($fk['onUpdate'])) $line .= " ON UPDATE {$fk['onUpdate']}";

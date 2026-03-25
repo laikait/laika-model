@@ -1,5 +1,4 @@
 <?php
-
 /**
  * Laika Database Model
  * Author: Showket Ahmed
@@ -105,23 +104,34 @@ class Model
 
     /**
      * Select
-     * @param ?string $columns Column names. Default is null
+     * @param array|string|null $columns Column names. Default is null
      * @return Model
      */
-    public function select(?string $columns = null): Model
+    public function select(array|string|null $columns = null): Model
     {
-        if (empty($columns) || trim($columns) == '*') {
+        if (empty($columns)) {
             $this->columns = '*';
             return $this;
+        } elseif (is_array($columns)) {
+            $columns = implode(', ', $columns);
         }
-        // Add Backtick
-        $array = explode(',', $columns);
+        // Split on commas that are NOT inside parentheses (e.g. CONCAT(a, b))
+        $array = preg_split('/,(?![^(]*\))/', $columns);
         // Trim & Quote Columns
         $trimed = array_map(function($v) {
             $v = trim($v);
-            return $this->sanitize($v);
+            // Handle AS alias: "expr AS alias" or "expr as alias"
+            if (preg_match('/^(.+?)\s+[Aa][Ss]\s+(\S+)$/', $v, $m)) {
+                $expr  = trim($m[1]);
+                $alias = trim($m[2]);
+                // Expression (contains parentheses) — pass through, only sanitize alias
+                $left = str_contains($expr, '(') ? $expr : $this->sanitize($expr);
+                return $left . ' AS ' . $this->sanitize($alias);
+            }
+            // Plain expression without alias — pass through if it contains parentheses
+            return str_contains($v, '(') ? $v : $this->sanitize($v);
         }, $array);
-        $this->columns = implode(',', $trimed);
+        $this->columns = implode(', ', $trimed);
         return $this;
     }
 
@@ -374,7 +384,7 @@ class Model
      * @param int|string $page Page Number. Default is Page Number 1
      * @return Model
      */
-    public function page(int|string $page = 1): Model
+    public function offset(int|string $page = 1): Model
     {
         $this->page = max(1, (int) $page);
         return $this;
@@ -546,7 +556,7 @@ class Model
             foreach ($chunk as $row) {
                 // Ensure row structure consistency
                 if (array_keys($row) !== $keys) {
-                    throw new \InvalidArgumentException('All insert rows must have identical columns.');
+                    throw new \InvalidArgumentException('All Insert Rows Must Have Identical Columns.');
                 }
                 $bindings = array_merge($bindings, array_values($row));
             }
@@ -556,7 +566,7 @@ class Model
                 $stmt = $this->pdo->prepare($sql);
                 $stmt->execute($bindings);
             } catch (\Throwable $th) {
-                throw new \RuntimeException($th->getMessage());
+                throw new \RuntimeException($th->getMessage(), (int) $th->getCode(), $th);
             }
         }
 
@@ -715,12 +725,12 @@ class Model
             $tbl = $this->sanitize($tblName);
             $col = $this->sanitize($colName);
         } else {
-            $tbl = $this->sanitize($this->table);
-            $col = $this->sanitize($column);
+            $colName = $column;
+            $tbl     = $this->sanitize($this->table);
+            $col     = $this->sanitize($column);
         }
 
-        // Check Column Name Does Not Match Primary Key
-        if (preg_replace('/[^a-z_]+/i', '', $col) == $this->id) {
+        if ($colName === $this->id) {
             throw new ModelException("Not Possible To Increment Primary Key!");
         }
 
@@ -760,13 +770,13 @@ class Model
             $tbl = $this->sanitize($tblName);
             $col = $this->sanitize($colName);
         } else {
-            $tbl = $this->sanitize($this->table);
-            $col = $this->sanitize($column);
+            $colName = $column;
+            $tbl     = $this->sanitize($this->table);
+            $col     = $this->sanitize($column);
         }
 
-        // Check Column Name Does Not Match Primary Key
-        if (preg_replace('/[^a-z_]+/i', '', $col) == $this->id) {
-            throw new ModelException("Not Possible To Decrement Primary Key!");
+        if ($colName === $this->id) {
+            throw new ModelException("Not Possible To Increment Primary Key!");
         }
 
         // Check Where Clause Exists
@@ -834,7 +844,7 @@ class Model
             return "'" . addslashes($value) . "'";
         }, $sql);
 
-        return $sql;
+        return "{$sql};";
     }
 
     /**
@@ -853,7 +863,7 @@ class Model
             return $result;
         } catch (\Throwable $e) {
             $this->pdo->rollBack();
-            throw new \RuntimeException("Transaction Failed: " . $e->getMessage(), 0, $e);
+            throw new \RuntimeException("Table [{$this->table}] Transaction Failed [{$e->getMessage()}]", (int) $e->getCode(), $e);
         }
     }
 
@@ -1097,8 +1107,8 @@ class Model
 
     private function validate(string $name): string
     {
-        if (!preg_match('/^[a-zA-Z_][a-zA-Z0-9_]*$/', $name)) {
-            throw new ModelException("Invalid identifier [{$name}].");
+        if (!preg_match('/^[a-zA-Z_][a-zA-Z0-9_\.]*$/', $name)) {
+            throw new ModelException("Invalid Identifier [{$name}].");
         }
         return $name;
     }
