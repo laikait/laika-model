@@ -626,6 +626,11 @@ class Model
             throw new \InvalidArgumentException("No WHERE Clause Provided for UPDATE operation.");
         }
 
+        // Check Data Is Not Empty
+        if (empty($data)) {
+            throw new \InvalidArgumentException("'\$data' Parameter Should Not Be Empty!");
+        }
+
         $set = [];
         foreach (array_keys($data) as $column) {
             $column = $this->sanitize($column);
