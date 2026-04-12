@@ -20,7 +20,7 @@ class ForeignKeyDefinition
     private array $definition;
 
     /**
-     * @param string      $column Column Name
+     * @param string $column Column Name
      * @param string|null $name   Optional constraint name
      */
     public function __construct(string $column, ?string $name = null)
