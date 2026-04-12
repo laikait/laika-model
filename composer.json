@@ -1,6 +1,6 @@
 {
     "name": "laikait/laika-model",
-    "description": "A PDO Database Model",
+    "description": "A PDO Multi-Connectoion Database Model",
     "type": "project",
     "license": "MIT",
     "autoload": {
