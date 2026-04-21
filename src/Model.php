@@ -411,6 +411,17 @@ class Model
     }
 
     /**
+     * Enable Soft Delete
+     * @param bool $enable Default is true
+     * @return Model
+     */
+    public function soft(bool $enable = true): Model
+    {
+        $this->softDelete = $enable;
+        return $this;
+    }
+
+    /**
      * Get Result
      * @return array{} Returns the results as an array
      */
@@ -665,17 +676,6 @@ class Model
     }
 
     /**
-     * Enable Soft Delete
-     * @param bool $enable Default is true
-     * @return Model
-     */
-    public function soft(bool $enable = true): Model
-    {
-        $this->softDelete = $enable;
-        return $this;
-    }
-
-    /**
      * Delete Row(s)
      * @throws \InvalidArgumentException Throws an exception if no WHERE clause is provided for the delete operation
      * @return int Returns the number of affected rows
@@ -754,6 +754,8 @@ class Model
         $stmt = $this->pdo->prepare($sql);
         $stmt->execute(array_merge([$number], $this->bindings));
 
+        // Reset Query Builder
+        $this->reset();
         return $stmt->rowCount();
     }
 
@@ -799,6 +801,8 @@ class Model
         $stmt = $this->pdo->prepare($sql);
         $stmt->execute(array_merge([$number], $this->bindings));
 
+        // Reset Query Builder
+        $this->reset();
         return $stmt->rowCount();
     }
 
@@ -849,6 +853,8 @@ class Model
             return "'" . addslashes($value) . "'";
         }, $sql);
 
+        // Reset Query Builder
+        $this->reset();
         return "{$sql};";
     }
 
@@ -874,7 +880,6 @@ class Model
 
     /**
      * Generate UID
-     * @param string $prefix UID Prefix. Example: 'UID'
      * @param int $maxAttempts Maximum Try if UID Already Exists
      * @return string
      * @throws \RuntimeException
