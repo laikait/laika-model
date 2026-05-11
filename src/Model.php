@@ -383,8 +383,20 @@ class Model
      * Offset Clause
      * @param int|string $page Page Number. Default is Page Number 1
      * @return Model
+     * @deprecated
      */
     public function offset(int|string $page = 1): Model
+    {
+        $this->page = max(1, (int) $page);
+        return $this;
+    }
+
+    /**
+     * Offset Clause
+     * @param int|string $page Page Number. Default is Page Number 1
+     * @return Model
+     */
+    public function page(int|string $page = 1): Model
     {
         $this->page = max(1, (int) $page);
         return $this;
