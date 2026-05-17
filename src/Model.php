@@ -93,9 +93,9 @@ class Model
     /**
      * // Table Name
      * @param string $table Required table name
-     * @return Model
+     * @return Static
      */
-    public function table(string $table): Model
+    public function table(string $table): Static
     {
         $this->reset();
         $this->table = $table;
@@ -105,9 +105,9 @@ class Model
     /**
      * Select
      * @param array|string|null $columns Column names. Default is null
-     * @return Model
+     * @return Static
      */
-    public function select(array|string|null $columns = null): Model
+    public function select(array|string|null $columns = null): Static
     {
         if (empty($columns)) {
             $this->columns = '*';
@@ -137,9 +137,9 @@ class Model
 
     /**
      * Select Distinct Rows
-     * @return Model
+     * @return Static
      */
-    public function distinct(): Model
+    public function distinct(): Static
     {
         $this->columns = 'DISTINCT ' . $this->columns;
         return $this;
@@ -152,9 +152,9 @@ class Model
      * @param string $operator Required operator
      * @param string $second Required second column
      * @param string $type Optional join type (LEFT, RIGHT, INNER)
-     * @return Model
+     * @return Static
      */
-    public function join(string $table, string $first, string $operator, string $second, string $type = 'LEFT'): Model
+    public function join(string $table, string $first, string $operator, string $second, string $type = 'LEFT'): Static
     {
         $allowedOps = ['=', '!=', '<>', '<', '>', '<=', '>='];
         if (!in_array(trim($operator), $allowedOps, true)) {
@@ -180,9 +180,9 @@ class Model
      * @param array|string $where Required column name or array of column-value pairs
      * @param string $operator Optional operator (default: '=')
      * @param string $compare Optional comparison type (AND, OR)
-     * @return Model
+     * @return Static
      */
-    public function where(array $where, string $operator = '=', string $compare = 'AND'): Model
+    public function where(array $where, string $operator = '=', string $compare = 'AND'): Static
     {
         $allowed = ['=', '!=', '<>', '<', '>', '<=', '>=', 'LIKE', 'NOT LIKE'];
         if (!in_array(strtoupper(trim($operator)), $allowed, true)) {
@@ -201,9 +201,9 @@ class Model
      * Where Not Equal
      * @param array|string $where Required column name or array of column-value pairs
      * @param string $compare Optional comparison type (AND, OR)
-     * @return Model
+     * @return Static
      */
-    public function whereNot(array $where, string $compare = 'AND'): Model
+    public function whereNot(array $where, string $compare = 'AND'): Static
     {
         return $this->where($where, '!=', $compare);
     }
@@ -213,9 +213,9 @@ class Model
      * @param string $column Required column name
      * @param array $values Required array of values to match
      * @param string $compare Optional comparison type (AND, OR)
-     * @return Model
+     * @return Static
      */
-    public function whereIn(string $column, array $values, string $compare = 'AND'): Model
+    public function whereIn(string $column, array $values, string $compare = 'AND'): Static
     {
         // Quote String
         $column = $this->sanitize($column);
@@ -230,9 +230,9 @@ class Model
      * @param string $column Required column name
      * @param array $values Required array of values to match
      * @param string $compare Optional comparison type (AND, OR)
-     * @return Model
+     * @return Static
      */
-    public function whereNotIn(string $column, array $values, string $compare = 'AND'): Model
+    public function whereNotIn(string $column, array $values, string $compare = 'AND'): Static
     {
         $column = $this->sanitize($column);
         $placeholders = implode(',', array_fill(0, count($values), '?'));
@@ -244,9 +244,9 @@ class Model
      * Check Column is Null
      * @param string $column Required column name
      * @param string $compare Optional comparison type (AND, OR)
-     * @return Model
+     * @return Static
      */
-    public function isNull(string $column, string $compare = 'AND'): Model
+    public function isNull(string $column, string $compare = 'AND'): Static
     {
         // Quote String
         $column = $this->sanitize($column);
@@ -259,9 +259,9 @@ class Model
      * Check Column is Not Null
      * @param string $column Required column name
      * @param string $compare Optional comparison type (AND, OR)
-     * @return Model
+     * @return Static
      */
-    public function notNull(string $column, string $compare = 'AND'): Model
+    public function notNull(string $column, string $compare = 'AND'): Static
     {
         // Quote String
         $column = $this->sanitize($column);
@@ -276,9 +276,9 @@ class Model
      * @param mixed $value1 Required first value
      * @param mixed $value2 Required second value
      * @param string $compare Optional comparison type (AND, OR)
-     * @return Model
+     * @return Static
      */
-    public function between(string $column, mixed $value1, mixed $value2, string $compare = 'AND'): Model
+    public function between(string $column, mixed $value1, mixed $value2, string $compare = 'AND'): Static
     {
         // Quote String
         $column = $this->sanitize($column);
@@ -291,11 +291,11 @@ class Model
      * Where Group
      * @param callable $callback Callback Function. Example: function(Model $model) {$model->where(...)}
      * @param string $compare Optional comparison type (AND, OR)
-     * @return Model
+     * @return Static
      */
-    public function whereGroup(callable $callback, string $compare = 'AND'): Model
+    public function whereGroup(callable $callback, string $compare = 'AND'): Static
     {
-        $model = new self($this->connection);
+        $model = new Static($this->connection);
 
         $callback($model);
 
@@ -314,9 +314,9 @@ class Model
     /**
      * Group By Clause
      * @param string ...$columns Required columns to group by
-     * @return Model
+     * @return Static
      */
-    public function groupBy(string ...$columns): Model
+    public function groupBy(string ...$columns): Static
     {
         $this->groupBy = array_map(function($column){
             // Quote String
@@ -330,9 +330,9 @@ class Model
      * @param string $column Example: 'id'
      * @param string $operator Example: '='
      * @param mixed $value Example: 1
-     * @return Model
+     * @return Static
      */
-    public function having(string $column, string $operator, mixed $value): Model
+    public function having(string $column, string $operator, mixed $value): Static
     {
         $allowed = ['=', '!=', '<>', '<', '>', '<=', '>=', 'LIKE', 'NOT LIKE'];
         if (!in_array(strtoupper(trim($operator)), $allowed, true)) {
@@ -352,9 +352,9 @@ class Model
      * @param string $column Required column name
      * @param string $direction Optional direction (ASC, DESC)
      * @throws \InvalidArgumentException Throws an exception if an invalid direction is provided
-     * @return Model
+     * @return Static
      */
-    public function order(string $column, string $direction = 'ASC'): Model
+    public function order(string $column, string $direction = 'ASC'): Static
     {
         $direction = strtoupper($direction);
         // Check Direction
@@ -371,9 +371,9 @@ class Model
     /**
      * Limit Clause
      * @param int|string $limit Required limit
-     * @return Model
+     * @return Static
      */
-    public function limit(int|string $limit): Model
+    public function limit(int|string $limit): Static
     {
         $this->limit = (int) $limit;
         return $this;
@@ -382,10 +382,10 @@ class Model
     /**
      * Offset Clause
      * @param int|string $page Page Number. Default is Page Number 1
-     * @return Model
+     * @return Static
      * @deprecated
      */
-    public function offset(int|string $page = 1): Model
+    public function offset(int|string $page = 1): Static
     {
         $this->page = max(1, (int) $page);
         return $this;
@@ -394,9 +394,9 @@ class Model
     /**
      * Offset Clause
      * @param int|string $page Page Number. Default is Page Number 1
-     * @return Model
+     * @return Static
      */
-    public function page(int|string $page = 1): Model
+    public function page(int|string $page = 1): Static
     {
         $this->page = max(1, (int) $page);
         return $this;
@@ -404,9 +404,9 @@ class Model
 
     /**
      * Get With Trashed Rows
-     * @return Model
+     * @return Static
      */
-    public function withTrash(): Model
+    public function withTrash(): Static
     {
         $this->notNull($this->deletedAtColumn);
         return $this;
@@ -414,9 +414,9 @@ class Model
 
     /**
      * Get Without Trashed Rows
-     * @return Model
+     * @return Static
      */
-    public function withoutTrash(): Model
+    public function withoutTrash(): Static
     {
         $this->isNull($this->deletedAtColumn);
         return $this;
@@ -425,9 +425,9 @@ class Model
     /**
      * Enable Soft Delete
      * @param bool $enable Default is true
-     * @return Model
+     * @return Static
      */
-    public function soft(bool $enable = true): Model
+    public function soft(bool $enable = true): Static
     {
         $this->softDelete = $enable;
         return $this;
