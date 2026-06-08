@@ -141,6 +141,29 @@ final class Connection
         return self::$drivers[$name];
     }
 
+    /**
+     * Apply Database Timezone
+     * @param string $timezone
+     * @param string $name
+     * @return void
+     */
+    public static function applyTimezone(string $timezone, string $name = 'default'): void
+    {
+        $pdo    = self::get($name);
+        $driver = self::driver($name);
+
+        $sql = match ($driver) {
+            'mysql', 'mariadb' => "SET time_zone = '{$timezone}'",
+            'pgsql'            => "SET TIME ZONE '{$timezone}'",
+            'oci', 'oracle'    => "ALTER SESSION SET TIME_ZONE = '{$timezone}'",
+            default            => null,
+        };
+
+        if ($sql) {
+            $pdo->exec($sql);
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Internal helpers
     // -----------------------------------------------------------------------

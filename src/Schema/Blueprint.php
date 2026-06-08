@@ -326,7 +326,7 @@ class Blueprint
 
     /**
      * Deleted At Column
-     * @param string $name Column Name. Default is 'deleted_at'
+     * @param string $column Column Name. Default is 'deleted_at'
      * @return ColumnDefinition
      */
     public function deleted(string $column = 'deleted_at'): ColumnDefinition
@@ -415,7 +415,7 @@ class Blueprint
 
     /**
      * Foreign Column
-     * @param string $columns Column Name
+     * @param string $column Column Name
      * @param ?string $name Index Name
      * @return ForeignKeyDefinition
      */
