@@ -481,6 +481,7 @@ class Model
     {
         $this->columns = "COUNT({$this->columns}) as count";
         $sql = $this->build();
+
         // Add Queries to Log
         Log::add($sql, $this->connection);
 
@@ -571,7 +572,7 @@ class Model
             // Build SQL
             $sql = "INSERT INTO {$tbl} (" . implode(', ', $columns) . ") VALUES {$placeholders}";
 
-            // Log query
+            // Add Queries to Log
             Log::add($sql, $this->connection);
 
             // Flatten bindings
@@ -615,6 +616,8 @@ class Model
             $this->page  = $page; // use page instead of offset directly
 
             $sql = $this->build();
+
+            // Add Queries to Log
             Log::add($sql, $this->connection);
 
             $stmt = $this->pdo->prepare($sql);
@@ -841,6 +844,7 @@ class Model
      */
     public function execute(string $sql, ?array $bindings = null): \PDOStatement
     {
+        // Add Queries to Log
         Log::add($sql, $this->connection);
         
         $stmt = $this->pdo->prepare($sql);

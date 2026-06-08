@@ -27,7 +27,7 @@ class Log
      */
     public static function add(string|array $queries, string $connection = 'default'): void
     {
-        $queries = is_array($queries) ? $queries : [$queries];
+        if (!is_array($queries)) $queries = [$queries];
         foreach ($queries as $query) {
             self::$queries[$connection][] = $query;
         }
