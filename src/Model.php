@@ -12,6 +12,7 @@ declare(strict_types=1);
 
 namespace Laika\Model;
 
+use Laika\Service\Init;
 use Laika\Model\Exceptions\ModelException;
 
 class Model
@@ -46,8 +47,8 @@ class Model
     /** @var array $having Having Clauses */
     protected array $having = [];
 
-    /** @var string $connection Connection Name */
-    protected string $connection;
+    /** @var string $connection Database Connection Name */
+    protected string $connection = 'default';
 
     /** @var string $table Table Name */
     protected string $table;
@@ -76,7 +77,12 @@ class Model
 
     public function __construct(?string $connection = null)
     {
-        $this->connection = $connection ?: 'default';
+        // Set Connection Name
+        if (!empty($connection)) $this->connection = $connection;
+
+        // Init DB for Connection
+        if (class_exists(Init::class)) Init::db($this->connection);
+
         $this->pdo = Connection::get($this->connection);
         $this->driver = Connection::driver($this->connection);
     }
@@ -513,6 +519,23 @@ class Model
     public function exists(): bool
     {
         return $this->count() > 0;
+    }
+
+    /**
+     * First Or Create
+     * @param array $where Columns to search for existing record
+     * @param array $data Additional data to insert if not found
+     * @return array Found or newly created record
+     */
+    public function firstOrCreate(array $where, array $data = []): array
+    {
+        $row = $this->where($where)->first();
+
+        if (!empty($row)) return $row;
+
+        $this->insert(array_merge($where, $data));
+
+        return $this->where($where)->first();
     }
 
     /**

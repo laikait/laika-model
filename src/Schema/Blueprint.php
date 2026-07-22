@@ -372,6 +372,46 @@ class Blueprint
         return $res;
     }
 
+    /**
+     * Blob Column
+     * @param string $name Column Name
+     * @return ColumnDefinition
+     */
+    public function blob(string $name): ColumnDefinition
+    {
+        return $this->addColumn('blob', $name);
+    }
+
+    /**
+     * Tiny Blob Column
+     * @param string $name Column Name
+     * @return ColumnDefinition
+     */
+    public function tinyBlob(string $name): ColumnDefinition
+    {
+        return $this->addColumn('tinyBlob', $name);
+    }
+
+    /**
+     * Medium Blob Column
+     * @param string $name Column Name
+     * @return ColumnDefinition
+     */
+    public function mediumBlob(string $name): ColumnDefinition
+    {
+        return $this->addColumn('mediumBlob', $name);
+    }
+
+    /**
+     * Long Blob Column
+     * @param string $name Column Name
+     * @return ColumnDefinition
+     */
+    public function longBlob(string $name): ColumnDefinition
+    {
+        return $this->addColumn('longBlob', $name);
+    }
+
     // -----------------------------------------------------------------------
     // Constraints
     // -----------------------------------------------------------------------

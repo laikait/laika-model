@@ -62,16 +62,20 @@ class PgSqlGrammar extends Grammar
     }
 
     // PG uses SERIAL / BIGSERIAL for auto-increment
-    protected function typeId(array $col): string      { return 'SERIAL'; }
-    protected function typeBigId(array $col): string   { return 'BIGSERIAL'; }
-    protected function typeBoolean(array $col): string { return 'BOOLEAN'; }
-    protected function typeJson(array $col): string    { return 'JSONB'; }
-    protected function typeDateTime(array $col): string { return 'TIMESTAMP'; }
-    protected function typeLongText(array $col): string { return 'TEXT'; }
-    protected function typeMediumText(array $col): string { return 'TEXT'; }
-    protected function typeBinary(array $col): string  { return 'BYTEA'; }
-    protected function typeUuid(array $col): string    { return 'UUID'; }
-    protected function autoIncrementKeyword(): string  { return ''; } // handled by SERIAL
+    protected function typeId(array $col): string           { return 'SERIAL'; }
+    protected function typeBigId(array $col): string        { return 'BIGSERIAL'; }
+    protected function typeBoolean(array $col): string      { return 'BOOLEAN'; }
+    protected function typeJson(array $col): string         { return 'JSONB'; }
+    protected function typeDateTime(array $col): string     { return 'TIMESTAMP'; }
+    protected function typeLongText(array $col): string     { return 'TEXT'; }
+    protected function typeMediumText(array $col): string   { return 'TEXT'; }
+    protected function typeTinyBlob(array $col): string     { return 'BYTEA'; }
+    protected function typeBlob(array $col): string         { return 'BYTEA'; }
+    protected function typeMediumBlob(array $col): string   { return 'BYTEA'; }
+    protected function typeLongBlob(array $col): string     { return 'BYTEA'; }
+    protected function typeBinary(array $col): string       { return 'OID'; }
+    protected function typeUid(array $col): string          { return 'UUID'; }
+    protected function autoIncrementKeyword(): string       { return ''; } // handled by SERIAL
     protected function typeEnum(array $col): string
     {
         $quoted = implode(', ', array_map(
