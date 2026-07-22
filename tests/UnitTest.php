@@ -16,7 +16,7 @@ use Laika\Model\Model;
 
 class UnitTest extends TestCase
 {    
-    public function testConnectionTest()
+    public function testConnectionTest(): void
     {
         $driver = getenv('DB_DRIVER');
         $config = match ($driver) {
@@ -42,7 +42,7 @@ class UnitTest extends TestCase
         $this->assertNotNull(Connection::get(), "Failed to initialize connection for {$driver}");
     }
 
-    public function testCreateTable()
+    public function testCreateTable(): void
     {
         $driver = getenv('DB_DRIVER');
         $config = match ($driver) {
@@ -74,15 +74,12 @@ class UnitTest extends TestCase
         });
 
         $model = new Model();
-        try {
-            $data = ['full_name' => 'Showket Ahmed'];
-            $inserted = $model->table('users')->insert($data);
-            $row = $model->table('users')->get($data);
-            echo "Inserted Data: " . json_encode($row, JSON_FORCE_OBJECT);
-        } catch (\Throwable $th) {
-            echo $th->getMessage();
-        }
+        $data = ['full_name' => 'Showket Ahmed'];
+        
+        $inserted = $model->table('users')->insert($data);
+        $this->assertTrue((bool) $inserted, "Failed to insert data in driver [{$driver}]");
 
-        $this->assertTrue((bool) $inserted , "Failed to insert data in driver [{$driver}]");
+        $row = $model->table('users')->get($data);
+        $this->assertNotEmpty($row, "Could not find inserted row in the database");
     }
 }
