@@ -75,7 +75,10 @@ class UnitTest extends TestCase
 
         $model = new Model();
         try {
-            $inserted = $model->table('users')->insert(['full_name' => 'Showket Ahmed']);
+            $data = ['full_name' => 'Showket Ahmed'];
+            $inserted = $model->table('users')->insert($data);
+            $row = $model->table('users')->get($data);
+            echo "Inserted Data: " . json_encode($row, JSON_FORCE_OBJECT);
         } catch (\Throwable $th) {
             echo $th->getMessage();
         }
