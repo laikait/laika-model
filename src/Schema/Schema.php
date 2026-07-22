@@ -13,9 +13,11 @@ declare(strict_types=1);
 namespace Laika\Model\Schema;
 
 use PDO;
+use Laika\Service\Init;
+use Laika\Service\Config;
 use Laika\Model\Connection;
-use Laika\Model\Exceptions\SchemaException;
 use Laika\Model\Schema\Grammars\Grammar;
+use Laika\Model\Exceptions\SchemaException;
 use Laika\Model\Schema\Grammars\MySqlGrammar;
 use Laika\Model\Schema\Grammars\PgSqlGrammar;
 use Laika\Model\Schema\Grammars\SqlSrvGrammar;
@@ -41,8 +43,9 @@ use Laika\Model\Schema\Grammars\SqliteGrammar;
  *       $table->string('phone')->nullable();
  *   });
  */
-class Schema
+final class Schema
 {
+    /** @var string $connection Database Connection Name */
     private string $connection = 'default';
 
     /** @var array<string, class-string<Grammar>> */
@@ -59,6 +62,11 @@ class Schema
     private function __construct(string $connection)
     {
         $this->connection = $connection;
+        if (class_exists(Init::class)) {
+            Init::db($this->connection);
+        } else {
+            if (!Connection::has($this->connection)) Connection::add(Config::get('database', 'default'));
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -205,6 +213,38 @@ class Schema
             throw new SchemaException("Grammar must extend " . Grammar::class);
         }
         self::$grammarMap[strtolower($driver)] = $grammarClass;
+    }
+
+    /**
+     * Disable Foreign Key Checks
+     * @return void
+     */
+    public function disableForeignKeyChecks(): void
+    {
+        $sql = match ($this->driverName()) {
+            'mysql', 'mariadb'   => 'SET FOREIGN_KEY_CHECKS = 0',
+            'pgsql', 'postgres'  => 'SET session_replication_role = replica',
+            'sqlite', 'sqlite3'  => 'PRAGMA foreign_keys = OFF',
+            'sqlsrv'             => 'EXEC sp_msforeachtable "ALTER TABLE ? NOCHECK CONSTRAINT ALL"',
+            default              => 'SET FOREIGN_KEY_CHECKS = 0',
+        };
+        $this->pdo()->exec($sql);
+    }
+
+    /**
+     * Enable Foreign Key Checks
+     * @return void
+     */
+    public function enableForeignKeyChecks(): void
+    {
+        $sql = match ($this->driverName()) {
+            'mysql', 'mariadb'   => 'SET FOREIGN_KEY_CHECKS = 1',
+            'pgsql', 'postgres'  => 'SET session_replication_role = DEFAULT',
+            'sqlite', 'sqlite3'  => 'PRAGMA foreign_keys = ON',
+            'sqlsrv'             => 'EXEC sp_msforeachtable "ALTER TABLE ? WITH CHECK CHECK CONSTRAINT ALL"',
+            default              => 'SET FOREIGN_KEY_CHECKS = 1',
+        };
+        $this->pdo()->exec($sql);
     }
 
     // -----------------------------------------------------------------------

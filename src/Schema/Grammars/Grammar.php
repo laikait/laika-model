@@ -76,7 +76,7 @@ abstract class Grammar
             'uid'           => $this->typeUid($col),
             'integer'       => $this->typeInteger($col),
             'bigInteger'    => $this->typeBigInteger($col),
-            'smallInteger'   => $this->typeSmallInteger($col),
+            'smallInteger'  => $this->typeSmallInteger($col),
             'tinyInteger'   => $this->typeTinyInteger($col),
             'float'         => $this->typeFloat($col),
             'double'        => $this->typeDouble($col),
@@ -93,6 +93,10 @@ abstract class Grammar
             'timestamp'     => $this->typeTimestamp($col),
             'json'          => $this->typeJson($col),
             'binary'        => $this->typeBinary($col),
+            'tinyBlob'      => $this->typeTinyBlob($col),
+            'blob'          => $this->typeBlob($col),
+            'mediumBlob'    => $this->typeMediumBlob($col),
+            'longBlob'      => $this->typeLongBlob($col),
             'enum'          => $this->typeEnum($col),
             'set'           => $this->typeSet($col),
             default         => strtoupper($col['type']),
@@ -115,19 +119,23 @@ abstract class Grammar
         $s = $col['scale'] ?? 2;
         return "DECIMAL({$p},{$s})";
     }
-    protected function typeBoolean(array $col): string    { return 'TINYINT(1)'; }
-    protected function typeString(array $col): string     { return 'VARCHAR(' . ($col['length'] ?? 255) . ')'; }
-    protected function typeChar(array $col): string       { return 'CHAR(' . ($col['length'] ?? 36) . ')'; }
-    protected function typeText(array $col): string       { return 'TEXT'; }
-    protected function typeMediumText(array $col): string { return 'MEDIUMTEXT'; }
-    protected function typeLongText(array $col): string   { return 'LONGTEXT'; }
-    protected function typeDate(array $col): string       { return 'DATE'; }
-    protected function typeTime(array $col): string       { return 'TIME'; }
-    protected function typeDateTime(array $col): string   { return 'DATETIME'; }
-    protected function typeTimestamp(array $col): string  { return 'TIMESTAMP'; }
-    protected function typeJson(array $col): string       { return 'JSON'; }
-    protected function typeBinary(array $col): string     { return 'BLOB'; }
-    protected function typeUid(array $col): string       { return 'VARCHAR(38)'; }
+    protected function typeBoolean(array $col): string      { return 'TINYINT(1)'; }
+    protected function typeString(array $col): string       { return 'VARCHAR(' . ($col['length'] ?? 255) . ')'; }
+    protected function typeChar(array $col): string         { return 'CHAR(' . ($col['length'] ?? 36) . ')'; }
+    protected function typeText(array $col): string         { return 'TEXT'; }
+    protected function typeMediumText(array $col): string   { return 'MEDIUMTEXT'; }
+    protected function typeLongText(array $col): string     { return 'LONGTEXT'; }
+    protected function typeDate(array $col): string         { return 'DATE'; }
+    protected function typeTime(array $col): string         { return 'TIME'; }
+    protected function typeDateTime(array $col): string     { return 'DATETIME'; }
+    protected function typeTimestamp(array $col): string    { return 'TIMESTAMP'; }
+    protected function typeJson(array $col): string         { return 'JSON'; }
+    protected function typeTinyBlob(array $col): string     { return 'TINYBLOB'; }
+    protected function typeBlob(array $col): string         { return 'BLOB'; }
+    protected function typeMediumBlob(array $col): string   { return 'MEDIUMBLOB'; }
+    protected function typeLongBlob(array $col): string     { return 'LONGBLOB'; }
+    protected function typeBinary(array $col): string       { return 'BLOB'; }
+    protected function typeUid(array $col): string          { return 'VARCHAR(38)'; }
     protected function typeEnum(array $col): string
     {
         // Default fallback for drivers without native ENUM

@@ -84,20 +84,24 @@ class SqliteGrammar extends Grammar
      * INTEGER PRIMARY KEY is the rowid alias — enables true auto-increment.
      * Must NOT include UNSIGNED or AUTO_INCREMENT keywords.
      */
-    protected function typeId(array $col): string      { return 'INTEGER'; }
-    protected function typeBigId(array $col): string   { return 'INTEGER'; }
-    protected function typeBoolean(array $col): string { return 'INTEGER'; }   // 0/1
-    protected function typeJson(array $col): string    { return 'TEXT'; }      // stored as JSON string
-    protected function typeLongText(array $col): string  { return 'TEXT'; }
-    protected function typeMediumText(array $col): string { return 'TEXT'; }
-    protected function typeDateTime(array $col): string  { return 'TEXT'; }    // ISO 8601 text
-    protected function typeTimestamp(array $col): string { return 'TEXT'; }
-    protected function typeDate(array $col): string      { return 'TEXT'; }
-    protected function typeTime(array $col): string      { return 'TEXT'; }
-    protected function typeBinary(array $col): string    { return 'BLOB'; }
-    protected function typeUuid(array $col): string      { return 'TEXT'; }
-    protected function typeFloat(array $col): string     { return 'REAL'; }
-    protected function typeDouble(array $col): string    { return 'REAL'; }
+    protected function typeId(array $col): string           { return 'INTEGER'; }
+    protected function typeBigId(array $col): string        { return 'INTEGER'; }
+    protected function typeBoolean(array $col): string      { return 'INTEGER'; }   // 0/1
+    protected function typeJson(array $col): string         { return 'TEXT'; }      // stored as JSON string
+    protected function typeLongText(array $col): string     { return 'TEXT'; }
+    protected function typeMediumText(array $col): string   { return 'TEXT'; }
+    protected function typeDateTime(array $col): string     { return 'TEXT'; }    // ISO 8601 text
+    protected function typeTimestamp(array $col): string    { return 'TEXT'; }
+    protected function typeDate(array $col): string         { return 'TEXT'; }
+    protected function typeTime(array $col): string         { return 'TEXT'; }
+    protected function typeBinary(array $col): string       { return 'BLOB'; }
+    protected function typeUid(array $col): string          { return 'TEXT'; }
+    protected function typeFloat(array $col): string        { return 'REAL'; }
+    protected function typeDouble(array $col): string       { return 'REAL'; }
+    protected function typeTinyBlob(array $col): string     { return 'BLOB'; }
+    protected function typeBlob(array $col): string         { return 'BLOB'; }
+    protected function typeMediumBlob(array $col): string   { return 'BLOB'; }
+    protected function typeLongBlob(array $col): string     { return 'BLOB'; }
 
     /** SQLite has no AUTO_INCREMENT keyword — INTEGER PRIMARY KEY handles it. */
     protected function autoIncrementKeyword(): string { return ''; }

@@ -69,16 +69,20 @@ class SqlSrvGrammar extends Grammar
         return "EXEC sp_rename '{$from}', '{$to}';";
     }
 
-    protected function typeId(array $col): string         { return 'INT'; }
-    protected function typeBigId(array $col): string      { return 'BIGINT'; }
-    protected function typeBoolean(array $col): string    { return 'BIT'; }
-    protected function typeDateTime(array $col): string   { return 'DATETIME2'; }
-    protected function typeJson(array $col): string       { return 'NVARCHAR(MAX)'; }
-    protected function typeLongText(array $col): string   { return 'NVARCHAR(MAX)'; }
-    protected function typeMediumText(array $col): string { return 'NVARCHAR(MAX)'; }
-    protected function typeText(array $col): string       { return 'NVARCHAR(MAX)'; }
-    protected function typeString(array $col): string     { return 'NVARCHAR(' . ($col['length'] ?? 255) . ')'; }
-    protected function typeBinary(array $col): string     { return 'VARBINARY(MAX)'; }
-    protected function typeUuid(array $col): string       { return 'UNIQUEIDENTIFIER'; }
-    protected function autoIncrementKeyword(): string     { return 'IDENTITY(1,1)'; }
+    protected function typeId(array $col): string           { return 'INT'; }
+    protected function typeBigId(array $col): string        { return 'BIGINT'; }
+    protected function typeBoolean(array $col): string      { return 'BIT'; }
+    protected function typeDateTime(array $col): string     { return 'DATETIME2'; }
+    protected function typeJson(array $col): string         { return 'NVARCHAR(MAX)'; }
+    protected function typeLongText(array $col): string     { return 'NVARCHAR(MAX)'; }
+    protected function typeMediumText(array $col): string   { return 'NVARCHAR(MAX)'; }
+    protected function typeText(array $col): string         { return 'NVARCHAR(MAX)'; }
+    protected function typeString(array $col): string       { return 'NVARCHAR(' . ($col['length'] ?? 255) . ')'; }
+    protected function typeBinary(array $col): string       { return 'VARBINARY(MAX)'; }
+    protected function typeUid(array $col): string          { return 'UNIQUEIDENTIFIER'; }
+    protected function autoIncrementKeyword(): string       { return 'IDENTITY(1,1)'; }
+    protected function typeTinyBlob(array $col): string     { return 'VARBINARY(MAX)'; }
+    protected function typeBlob(array $col): string         { return 'VARBINARY(MAX)'; }
+    protected function typeMediumBlob(array $col): string   { return 'VARBINARY(MAX)'; }
+    protected function typeLongBlob(array $col): string     { return 'VARBINARY(MAX)'; }
 }
