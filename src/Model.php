@@ -486,7 +486,7 @@ class Model
      */
     public function find(int|string $id): array
     {
-        return $this->where([$this->id => $id, $this->uid => $id], '=', 'OR')->first();
+        return $this->where([$this->id => (int) $id, $this->uid => (string) $id], '=', 'OR')->first();
     }
 
     /**
