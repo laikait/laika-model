@@ -465,7 +465,7 @@ class Model
 
     /**
      * Get First Result
-     * @return array{} Returns the first result as an array
+     * @return array Returns the first result as an array
      */
     public function first(): array
     {
@@ -477,6 +477,16 @@ class Model
         $this->limit(1);
         $result = $this->get();
         return $result[0] ?? [];
+    }
+
+    /**
+     * Find By ID / UID
+     * @param int $id ID / UID
+     * @return array Returns the result as an array
+     */
+    public function find(int|string $id): array
+    {
+        return $this->where([$this->id => (int) $id, $this->uid => (string) $id], '=', 'OR')->first();
     }
 
     /**
@@ -1020,7 +1030,7 @@ class Model
                         }
                         $sql .= " OFFSET {$offset} ROWS FETCH NEXT {$this->limit} ROWS ONLY";
                     } else {
-                        $sql = preg_replace('/^SELECT\s/i', "SELECT TOP {$this->limit} ", $sql);
+                        $sql = preg_replace('/^SELECT\s+/i', "SELECT TOP {$this->limit} ", $sql);
                     }
                     break;
 
