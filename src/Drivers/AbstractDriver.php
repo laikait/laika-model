@@ -21,7 +21,7 @@ abstract class AbstractDriver implements DriverInterface
 
     protected function getPort(array $config, int $default): int
     {
-        return (int)($config['port'] ?? $default);
+        return (int) ($config['port'] ?? $default);
     }
 
     protected function getCharset(array $config, string $default = 'utf8mb4'): string

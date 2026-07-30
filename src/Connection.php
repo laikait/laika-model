@@ -46,7 +46,74 @@ final class Connection
     /**
      * Register a Connection Config.
      *
-     * @param array  $config Must contain a 'driver' key.
+     * @param (
+     * array{
+     *      driver: 'sqlite',
+     *      path?: string,
+     *      password?: string,
+     *      options?: array
+     * }|
+     * array{
+     *      driver: 'mysql',
+     *      host: string,
+     *      database: string,
+     *      port?: int,
+     *      username?: string,
+     *      password?: string,
+     *      charset?: string,
+     *      options?: array
+     *      }|
+     * array{
+     *      driver: 'mariadb',
+     *      host: string,
+     *      database: string,
+     *      port?: int,
+     *      username?: string,
+     *      password?: string,
+     *      charset?: string,
+     *      options?: array
+     * }|
+     * array{
+     *      driver: 'pgsql',
+     *      host: string,
+     *      database: string,
+     *      port?: int,
+     *      username?: string,
+     *      password?: string,
+     *      charset?: string,
+     *      options?: array
+     * }|
+     * array{
+     *      driver: 'sqlsrv',
+     *      host: string,
+     *      database: string,
+     *      port?: int,
+     *      username?: string,
+     *      password?: string,
+     *      charset?: string,
+     *      options?: array
+     * }|
+     * array{
+     *      driver: 'firebird',
+     *      host: string,
+     *      database: string,
+     *      port?: int,
+     *      username?: string,
+     *      password?: string,
+     *      charset?: string,
+     *      options?: array
+     * }|
+     * array{
+     *      driver: 'oci',
+     *      host: string,
+     *      database: string,
+     *      port?: int,
+     *      username?: string,
+     *      password?: string,
+     *      charset?: string,
+     *      options?: array
+     * }
+     * ) $config Database connection configuration.
      * @param string $name Connection name (default: 'default').
      * @return void
      */
@@ -153,14 +220,18 @@ final class Connection
         $driver = self::driver($name);
 
         $sql = match ($driver) {
-            'mysql', 'mariadb' => "SET time_zone = '{$timezone}'",
-            'pgsql'            => "SET TIME ZONE '{$timezone}'",
+            'mysql', 'mariadb'  => "SET time_zone = '{$timezone}'",
+            'pgsql' , 'firebird'=> "SET TIME ZONE '{$timezone}'",
             'oci', 'oracle'    => "ALTER SESSION SET TIME_ZONE = '{$timezone}'",
             default            => null,
         };
 
         if ($sql) {
-            $pdo->exec($sql);
+            try {
+                $pdo->exec($sql);
+            } catch (\PDOException $e) {
+                // Firebird < 4.0 or driver without timezone support — ignore
+            }
         }
     }
 
