@@ -45,8 +45,13 @@ jobs:
         run: find src -name '*.php' -print0 | xargs -0 -n1 -- php -l
 
       # Install Dev Tooling
+      # --prefer-dist pulls zipballs from api.github.com and disables source
+      # fallback, so a single TLS/network hiccup fails the whole job. Retry
+      # over git, which uses the system CA store instead of PHP's curl.
       - name: Install dependencies
-        run: composer install --prefer-dist --no-progress
+        run: |
+          composer install --prefer-dist --no-progress \
+            || composer install --prefer-source --no-progress
 
       # Catches what the parser cannot: functions removed or deprecated in a
       # later version, signatures that changed, behaviour flagged for removal.
