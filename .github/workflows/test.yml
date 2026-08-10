@@ -1,0 +1,62 @@
+name: Laika Model Test Suite
+
+on:
+  push:
+    branches:
+      - beta
+      - main
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ########################################################
+  # PHP 8.1 - 8.5 COMPATIBILITY
+  ########################################################
+  test:
+    name: Validate PHP ${{ matrix.php-version }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        php-version: ['8.1', '8.2', '8.3', '8.4', '8.5']
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Setup PHP ${{ matrix.php-version }}
+        uses: shivammathur/setup-php@accd6127cb78bee3e8082180cb391013d204ef9f # v2
+        with:
+          php-version: ${{ matrix.php-version }}
+          extensions: pdo, json, mbstring
+          coverage: none
+          tools: composer
+
+      # Validate composer.json
+      - name: Validate composer.json
+        run: composer validate --no-check-publish
+
+      # Parses every file with the matrix version's own parser.
+      - name: Lint PHP syntax
+        run: find src -name '*.php' -print0 | xargs -0 -n1 -- php -l
+
+      # Install Dev Tooling
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-progress
+
+      # Catches what the parser cannot: functions removed or deprecated in a
+      # later version, signatures that changed, behaviour flagged for removal.
+      - name: PHPCompatibility check (8.1-8.5)
+        run: vendor/bin/phpcs --standard=phpcs.xml --report=full
+
+      - name: Report result
+        if: success()
+        run: echo "### PHP ${{ matrix.php-version }} ✅ compatible" >> $GITHUB_STEP_SUMMARY
+
+      - name: Report result (failed)
+        if: failure()
+        run: echo "### PHP ${{ matrix.php-version }} ❌ failed" >> $GITHUB_STEP_SUMMARY

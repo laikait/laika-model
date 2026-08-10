@@ -14,8 +14,8 @@
             "email": "strblackhawk@gmail.com"
         },
         {
-            "name":"Showket Ahmed",
-            "email":"riyadhtayf@gmail.com"
+            "name": "Showket Ahmed",
+            "email": "riyadhtayf@gmail.com"
         }
     ],
     "minimum-stability": "stable",
@@ -24,13 +24,22 @@
         "ext-pdo": "*"
     },
     "require-dev": {
-        "phpunit/phpunit": "^10.0"
+        "phpunit/phpunit": "^10.0",
+        "squizlabs/php_codesniffer": "^4.0.2",
+        "phpcompatibility/php-compatibility": "dev-develop",
+        "dealerdirect/phpcodesniffer-composer-installer": "^1.1"
     },
     "prefer-stable": true,
     "scripts": {
         "test": [
             "@php vendor/bin/phpunit --configuration phpunit.xml.dist --colors=always --testdox || true"
         ],
-        "lint": "php-cs-fixer fix --dry-run --diff"
+        "lint": "php-cs-fixer fix --dry-run --diff",
+        "compat": "phpcs --standard=phpcs.xml --report=full"
+    },
+    "config": {
+        "allow-plugins": {
+            "dealerdirect/phpcodesniffer-composer-installer": true
+        }
     }
 }
