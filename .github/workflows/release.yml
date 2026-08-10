@@ -2,7 +2,6 @@ name: Laika Model Release & Test Workflow
 
 on:
   push:
-    branches: [ beta ]
     tags:
       - 'v*.*.*'
   workflow_dispatch:
@@ -76,8 +75,13 @@ jobs:
       - name: Validate composer.json and composer.lock
         run: composer validate --strict
 
+      # --prefer-dist pulls zipballs from api.github.com and disables source
+      # fallback, so a single TLS/network hiccup fails the whole job. Retry
+      # over git, which uses the system CA store instead of PHP's curl.
       - name: Install dependencies
-        run: composer install --prefer-dist --no-progress --no-suggest
+        run: |
+          composer install --prefer-dist --no-progress \
+            || composer install --prefer-source --no-progress
 
       - name: Set database env vars
         run: |
@@ -155,8 +159,13 @@ jobs:
           php-version: 8.1
           tools: composer
 
+      # --prefer-dist pulls zipballs from api.github.com and disables source
+      # fallback, so a single TLS/network hiccup fails the whole job. Retry
+      # over git, which uses the system CA store instead of PHP's curl.
       - name: Install dependencies
-        run: composer install --prefer-dist --no-progress --no-suggest
+        run: |
+          composer install --prefer-dist --no-progress \
+            || composer install --prefer-source --no-progress
 
       - name: Run PHP CS Fixer (dry run)
         run: |
@@ -199,7 +208,9 @@ jobs:
           tools: composer
 
       - name: Install dependencies (no dev)
-        run: composer install --no-dev --prefer-dist --no-progress
+        run: |
+          composer install --no-dev --prefer-dist --no-progress \
+            || composer install --no-dev --prefer-source --no-progress
 
       - name: Prepare release artifact
         run: |
