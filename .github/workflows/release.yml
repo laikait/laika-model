@@ -2,7 +2,6 @@ name: Laika Model Release & Test Workflow
 
 on:
   push:
-    branches: [ beta ]
     tags:
       - 'v*.*.*'
   workflow_dispatch:
