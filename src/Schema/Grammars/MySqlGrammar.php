@@ -78,6 +78,50 @@ class MySqlGrammar extends Grammar
         return "RENAME TABLE {$this->wrapTable($from)} TO {$this->wrapTable($to)};";
     }
 
+    /** MySQL/MariaDB is the only supported driver with an UNSIGNED modifier. */
+    protected function supportsUnsigned(): bool { return true; }
+
+    /**
+     * MySQL accepts inline `INDEX name (cols)` inside CREATE TABLE, so keep
+     * emitting indexes there rather than as separate statements.
+     */
+    protected function compileConstraints(Blueprint $blueprint): array
+    {
+        $lines = parent::compileConstraints($blueprint);
+
+        foreach ($blueprint->getIndexes() as $index) {
+            $base = $index['name'] ?? implode('_', $index['columns']);
+            $name = $this->prefixName('idx_', $base);
+            $cols = implode(', ', array_map([$this, 'wrapColumn'], $index['columns']));
+            $lines[] = "INDEX {$this->wrapColumn($name)} ({$cols})";
+        }
+
+        return $lines;
+    }
+
+    /** Indexes are already inline in compileCreate(). */
+    public function compileIndexes(Blueprint $blueprint): array
+    {
+        return [];
+    }
+
+
+    /**
+     * Index names are scoped to the table on this driver, so the name the
+     * source chose is already unique and is kept verbatim.
+     */
+    protected function qualifyIndexName(string $table, string $base): string
+    {
+        return $base;
+    }
+
+    /** Constraint names are table-scoped here too. */
+    protected function qualifyConstraintName(string $table, string $base, string $prefix): string
+    {
+        return $base;
+    }
+
+    protected function autoIncrementKeyword(): string { return 'AUTO_INCREMENT'; }
     protected function typeId(array $col): string { return 'INT UNSIGNED'; }
     protected function typeBigId(array $col): string { return 'BIGINT UNSIGNED'; }
     protected function typeTinyInteger(array $col): string { return 'TINYINT'; }

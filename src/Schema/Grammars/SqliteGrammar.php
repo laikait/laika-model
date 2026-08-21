@@ -107,58 +107,53 @@ class SqliteGrammar extends Grammar
     protected function autoIncrementKeyword(): string { return ''; }
 
     /**
-     * SQLite does not support UNSIGNED — silently strip it.
+     * id/bigId become INTEGER PRIMARY KEY AUTOINCREMENT — the rowid alias.
+     *
+     * SQLite requires that exact spelling and rejects NOT NULL / DEFAULT
+     * appearing before PRIMARY KEY, so these columns bypass the shared emitter.
+     * UNSIGNED is handled by supportsUnsigned() returning false in the base.
      */
     protected function columnToSql(array $col): string
     {
-        // For id/bigId columns: INTEGER PRIMARY KEY is special in SQLite
-        // It must NOT have NOT NULL or other constraints before PRIMARY KEY
-        if (in_array($col['type'], ['id', 'bigId'])) {
-            $name = $this->wrapColumn($col['name']);
-            $sql  = "{$name} INTEGER PRIMARY KEY AUTOINCREMENT";
-            if (!empty($col['comment'])) {
-                // SQLite doesn't support inline comments, skip silently
-            }
-            return $sql;
+        if (in_array($col['type'], ['id', 'bigId'], true)) {
+            // Comments have no inline form in SQLite and are dropped here.
+            return $this->wrapColumn($col['name']) . ' INTEGER PRIMARY KEY AUTOINCREMENT';
         }
-
-        // Strip unsigned for all other columns (SQLite ignores it but let's be clean)
-        $col['unsigned'] = false;
 
         return parent::columnToSql($col);
     }
 
     /**
-     * SQLite does not support inline INDEX in CREATE TABLE.
-     * Return only PRIMARY KEY, UNIQUE, and FOREIGN KEY constraints.
-     * Indexes should be created separately via CREATE INDEX.
+     * Same as the base, minus a PRIMARY KEY line when an id/bigId column has
+     * already declared it inline — SQLite rejects two primary keys on a table.
+     *
+     * Indexes are not emitted inline (SQLite has no inline INDEX); the base
+     * compileIndexes() produces separate CREATE INDEX statements instead.
      */
     protected function compileConstraints(Blueprint $blueprint): array
     {
-        $lines = [];
+        $lines = parent::compileConstraints($blueprint);
 
-        // UNIQUE constraints (inline is fine)
-        foreach ($blueprint->getUniques() as $unique) {
-            $name = $unique['name'] ?? 'uq_' . implode('_', $unique['columns']);
-            $cols = implode(', ', array_map([$this, 'wrapColumn'], $unique['columns']));
-            $lines[] = "CONSTRAINT {$this->wrapColumn($name)} UNIQUE ({$cols})";
+        if (!$this->hasInlinePrimaryKey($blueprint)) {
+            return $lines;
         }
 
-        // Foreign keys (SQLite supports them with PRAGMA foreign_keys = ON)
-        foreach ($blueprint->getForeignKeys() as $fk) {
-            $col  = $this->wrapColumn($fk['column']);
-            $ref  = $this->wrapTable($fk['referenceTable']) . '(' . $this->wrapColumn($fk['referenceColumn']) . ')';
-            $name = $fk['name'] ?? 'fk_' . $fk['column'];
-            $line = "CONSTRAINT {$this->wrapColumn($name)} FOREIGN KEY ({$col}) REFERENCES {$ref}";
-            if (!empty($fk['onDelete'])) $line .= " ON DELETE {$fk['onDelete']}";
-            if (!empty($fk['onUpdate'])) $line .= " ON UPDATE {$fk['onUpdate']}";
-            $lines[] = $line;
+        // Drop the base's "PRIMARY KEY (...)" line; the id column carries it.
+        return array_values(array_filter(
+            $lines,
+            fn(string $line): bool => !str_starts_with($line, 'PRIMARY KEY (')
+        ));
+    }
+
+    /** True when a column already emits INTEGER PRIMARY KEY inline. */
+    private function hasInlinePrimaryKey(Blueprint $blueprint): bool
+    {
+        foreach ($blueprint->getColumns() as $col) {
+            if (in_array($col['type'], ['id', 'bigId'], true)) {
+                return true;
+            }
         }
 
-        // NOTE: Indexes are intentionally omitted here.
-        // SQLite does not support inline INDEX in CREATE TABLE.
-        // Use Schema::statement("CREATE INDEX ...") or Schema::createIndexes() separately.
-
-        return $lines;
+        return false;
     }
 }

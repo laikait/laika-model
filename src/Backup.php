@@ -28,12 +28,18 @@ class Backup
     /** @var string Connection Name */
     protected string $connection;
 
-    public function __construct(array $config, string $connection = 'default')
+    /**
+     * @param array $config Connection config. Defaults to the config already
+     *                      registered for $connection — pass an array only to
+     *                      override it.
+     * @param ?string $connection Connection name (default: Connection's default).
+     */
+    public function __construct(array $config = [], ?string $connection = null)
     {
-        $this->connection = $connection;
-        $this->pdo        = Connection::get($connection);
-        $this->driver     = Connection::driver($connection);
-        $this->config     = $config;
+        $this->connection = $connection ?? Connection::getDefault();
+        $this->pdo        = Connection::get($this->connection);
+        $this->driver     = Connection::driver($this->connection);
+        $this->config     = $config ?: Connection::config($this->connection);
     }
 
     ####################################################################
@@ -48,14 +54,18 @@ class Backup
      */
     public function create(string $path): string
     {
+        // $this->driver is canonical (see Connection::driver()), so aliases
+        // such as 'mariadb' or 'oracle' never reach this match.
         return match ($this->driver) {
-            'mysql', 'mariadb'  => $this->mysqlBackup($path),
-            'pgsql'             => $this->pgsqlBackup($path),
-            'sqlite', 'sqlite3' => $this->sqliteBackup($path),
-            'sqlsrv'            => $this->sqlsrvBackup($path),
-            'firebird'          => $this->firebirdBackup($path),
-            'oci', 'oracle'     => $this->ociBackup($path),
-            default             => throw new BackupException("Backup Not Supported For Driver [{$this->driver}]."),
+            'mysql'     =>  $this->mysqlBackup($path),
+            'mariadb'   =>  $this->mysqlBackup($path),
+            'pgsql'     =>  $this->pgsqlBackup($path),
+            'sqlite'    =>  $this->sqliteBackup($path),
+            'sqlite3'   =>  $this->sqliteBackup($path),
+            'sqlsrv'    =>  $this->sqlsrvBackup($path),
+            'firebird'  =>  $this->firebirdBackup($path),
+            'oci'       =>  $this->ociBackup($path),
+            default     =>  throw new BackupException("Backup Not Supported For Driver [{$this->driver}]."),
         };
     }
 
@@ -72,13 +82,16 @@ class Backup
         }
 
         match ($this->driver) {
-            'mysql', 'mariadb'  => $this->mysqlRestore($path),
-            'pgsql'             => $this->pgsqlRestore($path),
-            'sqlite', 'sqlite3' => $this->sqliteRestore($path),
-            'sqlsrv'            => $this->sqlsrvRestore($path),
-            'firebird'          => $this->firebirdRestore($path),
-            'oci', 'oracle'     => $this->ociRestore($path),
-            default             => throw new BackupException("Restore Not Supported For Driver [{$this->driver}]."),
+            'mysql'    => $this->mysqlRestore($path),
+            'mariadb'  => $this->mysqlRestore($path),
+            'pgsql'    => $this->pgsqlRestore($path),
+            'sqlite'   => $this->sqliteRestore($path),
+            'sqlite3'  => $this->sqliteRestore($path),
+            'sqlsrv'   => $this->sqlsrvRestore($path),
+            'firebird' => $this->firebirdRestore($path),
+            'oci'      => $this->ociRestore($path),
+            'oracle'   => $this->ociRestore($path),
+            default    => throw new BackupException("Restore Not Supported For Driver [{$this->driver}]."),
         };
     }
 
@@ -187,7 +200,7 @@ class Backup
 
     protected function sqliteBackup(string $path): string
     {
-        $dbFile = $this->config['database'] ?? null;
+        $dbFile = $this->config['database'] ?? $this->config['path'] ?? NULL;
 
         if (!$dbFile || !file_exists($dbFile)) {
             throw new BackupException("SQLite Database File Not Found.");
@@ -202,7 +215,7 @@ class Backup
 
     protected function sqliteRestore(string $path): void
     {
-        $dbFile = $this->config['database'] ?? null;
+        $dbFile = $this->config['database'] ?? $this->config['path'] ?? NULL;
 
         if (!$dbFile) {
             throw new BackupException("SQLite Database Path Not Configured.");
@@ -401,7 +414,6 @@ class Backup
             : "command -v {$binary}";
 
         exec($checkCmd . ' 2>&1', $output, $code);
-
         return $code === 0;
     }
 

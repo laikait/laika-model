@@ -13,8 +13,6 @@ declare(strict_types=1);
 namespace Laika\Model\Schema;
 
 use PDO;
-use Laika\Service\Init;
-use Laika\Service\Config;
 use Laika\Model\Connection;
 use Laika\Model\Schema\Grammars\Grammar;
 use Laika\Model\Exceptions\SchemaException;
@@ -48,7 +46,12 @@ final class Schema
     /** @var string $connection Database Connection Name */
     private string $connection = 'default';
 
-    /** @var array<string, class-string<Grammar>> */
+    /**
+     * Keyed by *canonical* driver name (see Connection::driver()). Aliases such
+     * as 'mariadb' or 'sqlite3' are normalised away before lookup.
+     *
+     * @var array<string, class-string<Grammar>>
+     */
     private static array $grammarMap = [
         'mysql'    => MySqlGrammar::class,
         'mariadb'  => MySqlGrammar::class,
@@ -62,11 +65,28 @@ final class Schema
     private function __construct(string $connection)
     {
         $this->connection = $connection;
-        if (class_exists(Init::class)) {
-            Init::db($this->connection);
-        } else {
-            if (!Connection::has($this->connection)) Connection::add(Config::get('database', 'default'));
+
+        // Optional host-framework integration — neither Init nor Config is a
+        // declared dependency, so both must be guarded before use.
+        if (class_exists("\\Laika\\Service\\Init")) {
+            \Laika\Service\Init::db($this->connection);
+            return;
         }
+
+        if (Connection::has($this->connection)) {
+            return;
+        }
+
+        if (class_exists("\\Laika\\Service\\Config")) {
+            // Register under the requested name, not 'default' — otherwise
+            // Schema::on('analytics') would configure the wrong connection.
+            Connection::add(\Laika\Service\Config::get('database', $this->connection), $this->connection);
+            return;
+        }
+
+        throw new SchemaException(
+            "No connection config registered for [{$this->connection}] — call Connection::add() first."
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -74,9 +94,9 @@ final class Schema
     // -----------------------------------------------------------------------
 
     /** Select a specific connection for schema operations. */
-    public static function on(string $connection = 'default'): self
+    public static function on(?string $connection = null): self
     {
-        return new self($connection);
+        return new self($connection ?? Connection::getDefault());
     }
 
     // // Proxy static calls to a default-connection instance
@@ -96,11 +116,22 @@ final class Schema
     {
         $blueprint = new Blueprint($table, $options);
         $callback($blueprint);
-        $sql = $this->grammar()->compileCreate($blueprint);
-        try {
-            $this->pdo()->exec($sql);
-        } catch (\Throwable $th) {
-            throw new SchemaException("Schema Error In Query [{$sql}]. {$th->getMessage()}.", (int) $th->getCode(), $th);
+
+        $grammar = $this->grammar();
+
+        // Only MySQL accepts inline INDEX inside CREATE TABLE; every other
+        // driver returns its indexes here as separate CREATE INDEX statements.
+        $statements = array_merge(
+            [$grammar->compileCreate($blueprint)],
+            $grammar->compileIndexes($blueprint)
+        );
+
+        foreach ($statements as $sql) {
+            try {
+                $this->pdo()->exec($sql);
+            } catch (\Throwable $th) {
+                throw new SchemaException("Schema Error In Query [{$sql}]. {$th->getMessage()}.", (int) $th->getCode(), $th);
+            }
         }
     }
 
@@ -157,7 +188,7 @@ final class Schema
         $stmt   = $pdo->prepare($sql);
         $driver = $this->driverName();
 
-        if (in_array($driver, ['sqlite', 'sqlite3'])) {
+        if ($driver === 'sqlite') {
             // sqlite_master query only needs the table name
             $stmt->execute([$table]);
         } else {
@@ -170,6 +201,9 @@ final class Schema
 
     /**
      * Determine whether a column exists on a table.
+     * @param string $table
+     * @param string $column
+     * @return bool
      */
     public function hasColumn(string $table, string $column): bool
     {
@@ -178,7 +212,7 @@ final class Schema
         $stmt   = $pdo->prepare($sql);
         $driver = $this->driverName();
 
-        if (in_array($driver, ['sqlite', 'sqlite3'])) {
+        if ($driver === 'sqlite') {
             // pragma_table_info(tableName) — args are (table, column)
             $stmt->execute([$table, $column]);
         } else {
@@ -186,11 +220,12 @@ final class Schema
             $stmt->execute([$db, $table, $column]);
         }
 
-        return (int)$stmt->fetchColumn() > 0;
+        return (int) $stmt->fetchColumn() > 0;
     }
 
     /**
      * Execute raw SQL.
+     * @return bool
      */
     public function statement(string $sql): bool
     {
@@ -203,8 +238,8 @@ final class Schema
 
     /**
      * Register a custom grammar for a driver.
-     *
-     * @param string $driver e.g. "oci"
+     * @param string $driver Canonical driver name as reported by
+     * Connection::driver(), e.g. "oci" (not "oracle").
      * @param class-string<Grammar> $grammarClass
      */
     public static function registerGrammar(string $driver, string $grammarClass): void
@@ -217,59 +252,95 @@ final class Schema
 
     /**
      * Disable Foreign Key Checks
+     * No-op on drivers with no session-wide switch (Oracle, Firebird) — there
+     * the constraints must be disabled one at a time.
      * @return void
      */
     public function disableForeignKeyChecks(): void
     {
-        $sql = match ($this->driverName()) {
-            'mysql', 'mariadb'   => 'SET FOREIGN_KEY_CHECKS = 0',
-            'pgsql', 'postgres'  => 'SET session_replication_role = replica',
-            'sqlite', 'sqlite3'  => 'PRAGMA foreign_keys = OFF',
-            'sqlsrv'             => 'EXEC sp_msforeachtable "ALTER TABLE ? NOCHECK CONSTRAINT ALL"',
-            default              => 'SET FOREIGN_KEY_CHECKS = 0',
-        };
+        $sql = $this->foreignKeyCheckSql(false);
+
+        if ($sql === null) {
+            return;
+        }
+
         $this->pdo()->exec($sql);
     }
 
     /**
      * Enable Foreign Key Checks
+     * No-op on drivers with no session-wide switch — see
+     * disableForeignKeyChecks().
      * @return void
      */
     public function enableForeignKeyChecks(): void
     {
-        $sql = match ($this->driverName()) {
-            'mysql', 'mariadb'   => 'SET FOREIGN_KEY_CHECKS = 1',
-            'pgsql', 'postgres'  => 'SET session_replication_role = DEFAULT',
-            'sqlite', 'sqlite3'  => 'PRAGMA foreign_keys = ON',
-            'sqlsrv'             => 'EXEC sp_msforeachtable "ALTER TABLE ? WITH CHECK CHECK CONSTRAINT ALL"',
-            default              => 'SET FOREIGN_KEY_CHECKS = 1',
-        };
+        $sql = $this->foreignKeyCheckSql(true);
+
+        if ($sql === null) {
+            return;
+        }
+
         $this->pdo()->exec($sql);
     }
 
-    // -----------------------------------------------------------------------
-    // Internals
-    // -----------------------------------------------------------------------
+    ######################################################################
+    /*========================== INTERNAL API ==========================*/
+    ######################################################################
+    /**
+     * The statement that toggles FK enforcement, or null where the driver has
+     * no equivalent. Never guess — a MySQL default here is a syntax error on
+     * Oracle and Firebird, both of which can otherwise connect and query fine.
+     * @param bool $enabled
+     * @return ?string
+     */
+    private function foreignKeyCheckSql(bool $enabled): ?string
+    {
+        return match ($this->driverName()) {
+            'mysql'     =>  'SET FOREIGN_KEY_CHECKS = ' . ($enabled ? '1' : '0'),
+            'mariadb'   =>  'SET FOREIGN_KEY_CHECKS = ' . ($enabled ? '1' : '0'),
+            'pgsql'     =>  'SET session_replication_role = ' . ($enabled ? 'DEFAULT' : 'replica'),
+            'sqlite'    =>  'PRAGMA foreign_keys = ' . ($enabled ? 'ON' : 'OFF'),
+            'sqlite3'   =>  'PRAGMA foreign_keys = ' . ($enabled ? 'ON' : 'OFF'),
+            'sqlsrv'    =>  $enabled ?
+                                'EXEC sp_msforeachtable "ALTER TABLE ? WITH CHECK CHECK CONSTRAINT ALL"' :
+                                'EXEC sp_msforeachtable "ALTER TABLE ? NOCHECK CONSTRAINT ALL"',
+            default             =>  null,
+        };
+    }
 
+    /**
+     * Get PDO Connection
+     * @return PDO
+     */
     private function pdo(): PDO
     {
         return Connection::get($this->connection);
     }
 
+    /**
+     * Get Config
+     * @return array
+     */
     private function config(): array
     {
-        // Retrieve raw config via reflection – Connection stores it statically
-        $ref = new \ReflectionClass(Connection::class);
-        $prop = $ref->getProperty('configs');
-        $prop->setAccessible(true);
-        return $prop->getValue()[$this->connection] ?? [];
+        return Connection::config($this->connection);
     }
 
+    /**
+     * Canonical driver name — never an alias
+     * @return string
+     */
     private function driverName(): string
     {
-        return strtolower($this->config()['driver'] ?? 'mysql');
+        return Connection::driver($this->connection);
     }
 
+    /**
+     * Get Grammar
+     * @return Grammar
+     * @throws SchemaException
+     */
     private function grammar(): Grammar
     {
         $driver = $this->driverName();
@@ -278,7 +349,8 @@ final class Schema
             return new self::$grammarMap[$driver]();
         }
 
-        // Fallback to MySQL-compatible grammar
-        return new MySqlGrammar();
+        // Never guess a dialect — a wrong grammar produces SQL that either fails
+        // obscurely or, worse, succeeds against the wrong server.
+        throw new SchemaException("No schema grammar registered for driver [{$driver}]. Use Schema::registerGrammar() to add one.");
     }
 }

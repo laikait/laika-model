@@ -1,6 +1,9 @@
 # Laika Single/Multi Connecton Database Model
 A lightweight, secure PDO database model and schema builder for PHP 8.1+.  
-Supports MySQL, MariaDB, PostgreSQL, SQLite, SQL Server, Oracle, and Firebird.
+Full support — queries **and** schema builder — for MySQL, MariaDB, PostgreSQL,
+SQLite and SQL Server. Oracle and Firebird are supported for connections,
+queries and backup, but ship no built-in schema grammar — see
+[Custom Grammar](#custom-grammar) to register your own.
 
 **Author:** Showket Ahmed  
 **License:** MIT
@@ -56,6 +59,11 @@ Supports MySQL, MariaDB, PostgreSQL, SQLite, SQL Server, Oracle, and Firebird.
   - [Raw Statements](#raw-statements)
   - [Multiple Connections](#multiple-connections)
   - [Custom Grammar](#custom-grammar)
+- [SQL Converter](#sql-converter)
+  - [Converting a dump](#converting-a-dump)
+  - [Warnings and the report](#warnings-and-the-report)
+  - [What converts](#what-converts)
+  - [What does not convert](#what-does-not-convert)
 - [Log](#log)
 - [Driver Reference](#driver-reference)
 - [Security](#security)
@@ -94,7 +102,18 @@ Connection::add([
     'username' => 'root',
     'password' => 'secret',
     'charset'  => 'utf8mb4',
+    'timezone' => '+00:00', // optional — omit to use the server's timezone
 ]);
+```
+
+> **Upgrading from 3.2.x — MySQL session timezone.** Earlier versions forced
+> every MySQL connection to `+00:00` with no way to change it. The session
+> timezone now follows the server unless you set the `timezone` key. If your
+> application relied on the old behaviour, add `'timezone' => '+00:00'` to the
+> config.
+
+```php
+use Laika\Model\Connection;
 
 // MySQL via Unix socket (localhost only)
 Connection::add([
@@ -164,11 +183,52 @@ Connection::add([
 ```php
 Connection::has('read');          // check if connection is registered
 Connection::names();              // ['default', 'read', ...]
+Connection::config('read');       // the raw config array registered for a name
 Connection::close('read');        // destroy a live connection
 Connection::closeAll();           // destroy all live connections
+Connection::reconnect('read');    // close and immediately re-establish
 Connection::purge();              // remove all configs + connections (testing)
-Connection::driver('default');    // get driver name: 'mysql', 'pgsql', etc.
+Connection::driver('read');       // canonical driver name: 'mysql', 'pgsql', ...
+Connection::generation();         // registry version, bumped on every mutation
 ```
+
+Every method that takes a connection name may be called without one, in which
+case the **default connection** is used:
+
+```php
+Connection::add([...], 'read');
+Connection::setDefault('read');   // 'read' is now used whenever a name is omitted
+Connection::getDefault();         // 'read'
+
+new User();                       // uses 'read'
+Schema::on()->hasTable('users');  // uses 'read'
+```
+
+`setDefault()` throws if no config is registered under that name. `purge()`
+resets the default back to `'default'`.
+
+> **Driver names.** Config accepts aliases — `mariadb`, `postgres`, `sqlite3`,
+> `oracle`, `ibase` — but `Connection::driver()` always reports the *canonical*
+> name (`mysql`, `pgsql`, `sqlite`, `oci`, `firebird`). Anything that branches on
+> a driver string, including a grammar registered via `Schema::registerGrammar()`,
+> should use the canonical name.
+
+`Connection::driver()` is resolvable before the connection is established — it is
+derived from the registered config, so it does not force a connect.
+
+### Stale connections
+
+Re-registering a name replaces its live PDO handle:
+
+```php
+$user = new User();
+Connection::add($newConfig);   // same name, different database
+$user->table('users')->get();  // automatically runs against the new connection
+```
+
+Models detect this through `Connection::generation()` and re-resolve their handle
+on the next query, so a `Model` built before the change never runs against a dead
+socket.
 
 ---
 
@@ -505,6 +565,32 @@ $users->transaction(function (Model $model) {
 ```
 
 Automatically rolls back and rethrows as `RuntimeException` on any exception.
+
+**Nested transactions** on the same connection are supported via savepoints. Only
+the outermost call opens a real transaction; an inner failure rolls back to its
+own savepoint and leaves the outer transaction intact:
+
+```php
+$users->transaction(function (Model $model) use ($users) {
+    $model->insert(['name' => 'Alice']);          // kept
+
+    try {
+        $users->transaction(function (Model $inner) {
+            $inner->table('orders')->insert([...]); // rolled back
+            throw new RuntimeException('nope');
+        });
+    } catch (RuntimeException $e) {
+        // The outer transaction is still open and Alice is still there.
+    }
+});
+
+Connection::transactionLevel();   // current depth, 0 when none is active
+```
+
+The same depth is shared by every `Model` on a connection, so two models on
+`'default'` participate in one transaction rather than fighting over it. Each
+connection's transaction is independent — there is no cross-connection
+(two-phase-commit) support.
 
 ---
 
@@ -873,6 +959,11 @@ Schema::on('warehouse')->dropIfExists('temp');
 Schema::on('replica')->rename('orders_old', 'orders_archive');
 ```
 
+Calling `Schema::on()` with no argument uses the current default connection (see
+[Connection Management](#connection-management)). The connection must already be
+registered with `Connection::add()` — `Schema` throws a `SchemaException` naming
+the missing connection rather than failing deeper down.
+
 ---
 
 ### Custom Grammar
@@ -894,6 +985,7 @@ class OracleGrammar extends Grammar
     public function compileRenameTable(string $from, string $to): string { /* ... */ }
 }
 
+// Register against the canonical driver name ('oci', not 'oracle').
 Schema::registerGrammar('oci', OracleGrammar::class);
 
 // Now Schema::on('oracle') uses your grammar
@@ -902,6 +994,128 @@ Schema::on('oracle')->create('users', function (Blueprint $t) {
     $t->string('name');
 });
 ```
+
+---
+
+## SQL Converter
+
+Translate existing SQL from one driver dialect to another — a one-line
+`CREATE TABLE`, a `.sql` file, or a multi-gigabyte `mysqldump` backup.
+
+```php
+use Laika\Model\Converter\Converter;
+
+$converter = new Converter(from: 'mysql', to: 'pgsql');
+
+echo $converter->convert("CREATE TABLE `t` (`id` int unsigned NOT NULL AUTO_INCREMENT)");
+// CREATE TABLE "t" (
+//   "id" SERIAL NOT NULL
+// );
+```
+
+Driver aliases work exactly as they do in connection config, so
+`new Converter('mariadb', 'postgres')` is the same as `new Converter('mysql', 'pgsql')`.
+Supported targets are `mysql`, `pgsql`, `sqlite` and `sqlsrv` — the four drivers
+that have a Schema grammar.
+
+### Converting a dump
+
+`convert()` returns the whole result as a string, which is fine for a statement
+or a small file. For anything large use `stream()` or `convertFile()`, which
+hold **one statement at a time** in memory regardless of input size:
+
+```php
+// Constant memory — a 2 GB dump never lands in RAM.
+foreach ($converter->stream('mysql-dump.sql') as $sql) {
+    echo $sql, "\n";
+}
+
+// File to file.
+$written = $converter->convertFile('mysql-dump.sql', 'pgsql-dump.sql');
+
+// Or straight into a registered connection.
+Connection::add(['driver' => 'pgsql', /* ... */], 'target');
+$executed = $converter->apply('mysql-dump.sql', 'target');
+```
+
+Input may be a string, a file path, an open resource or an `SplFileObject`. A
+string is treated as a path only when a readable file of that name exists, so
+`convert(file_get_contents('dump.sql'))` and `convert('dump.sql')` both do what
+you mean.
+
+`apply()` disables foreign key checks for the duration so the dump's table order
+does not matter, re-enables them even if a statement throws, and refuses to run
+against a connection whose driver is not the converter's target.
+
+### Warnings and the report
+
+The converter is **best-effort**: it converts what it can and records the rest,
+because a migration that dies on statement 40,000 of 50,000 is worse than one
+that flags twelve lossy conversions.
+
+```php
+$report = $converter->report();
+
+echo $report->summary();
+// 36 statement(s) [comment=28, database=2, drop_table=2, create_table=2, insert=2], 2 warning(s)
+
+foreach ($report->warnings() as $warning) {
+    echo "#{$warning->ordinal} [{$warning->level}] {$warning->reason}\n";
+}
+```
+
+Warnings carry a `level`: `lossy` (converted, but something was approximated),
+`passthrough` (not understood, emitted unchanged) or `skipped` (understood and
+deliberately dropped). Filter with `$report->warningsOfLevel(Warning::LEVEL_LOSSY)`.
+
+Pass `strict: true` to promote every warning to a `ConverterException` instead —
+useful for validating that a dump is fully portable before committing to it.
+
+```php
+$converter = new Converter('mysql', 'pgsql', strict: true);
+```
+
+Reuse an instance across sources by calling `$converter->reset()`.
+
+### What converts
+
+| Source | Handling |
+|---|---|
+| `CREATE TABLE` | Columns, types, defaults, nullability, comments, `PRIMARY KEY`, `UNIQUE`, `KEY`/`INDEX`, single-column `FOREIGN KEY` with `ON DELETE`/`ON UPDATE`, and table options (`ENGINE`, `CHARSET`, `COLLATE`) |
+| `CREATE INDEX` | Rewritten for the target, including the inline-vs-standalone difference |
+| `INSERT` | Extended inserts are split per row; literals are re-encoded (see below) |
+| `DROP TABLE` | Split per table, `IF EXISTS` preserved |
+| Auto-increment | `AUTO_INCREMENT` ⇄ `SERIAL`/`BIGSERIAL` ⇄ `IDENTITY(1,1)` ⇄ `INTEGER PRIMARY KEY AUTOINCREMENT` |
+| `ENUM` | Native on MySQL, `VARCHAR + CHECK` elsewhere |
+| Defaults | `now()`, `current_timestamp()`, `getdate()` and friends all normalise to `CURRENT_TIMESTAMP`; PostgreSQL `nextval()` is dropped in favour of the target's own auto-increment |
+| Unknown types | Carried through verbatim with a warning — never guessed at, never dropped |
+
+Literal re-encoding is where silent data corruption otherwise hides:
+
+- MySQL backslash escapes (`\'`) become standard doubling (`''`), because
+  PostgreSQL reads a backslash literally in a standard-conforming string.
+- `0xDEADBEEF` becomes `X'DEADBEEF'` on SQLite and `'\xdeadbeef'::bytea` on PostgreSQL.
+- `0`/`1` into a `BOOLEAN` column becomes `FALSE`/`TRUE` on PostgreSQL, which
+  rejects the numeric form. This is why the converter tracks column types from
+  the `CREATE TABLE` statements it has already seen.
+- MySQL zero dates (`'0000-00-00'`) become `NULL` with a warning; PostgreSQL
+  rejects them outright.
+
+> **Binary columns.** Take dumps with `mysqldump --hex-blob`. Without it,
+> mysqldump writes binary data as an escaped string literal, which arrives in
+> the target as text rather than a blob.
+
+### What does not convert
+
+Views, triggers, stored procedures and functions; dialect-specific expressions
+inside `SELECT` (`IFNULL` vs `COALESCE`); partitioning; generated columns;
+composite foreign keys; `CHECK`, `FULLTEXT` and `SPATIAL` constraints. Each is
+detected and reported — passed through unchanged where that is safe, dropped
+with a warning where it is not.
+
+`CREATE DATABASE`, `USE` and session statements (`SET NAMES`, `START TRANSACTION`)
+are dropped: the target database is chosen by the connection, and the target
+manages its own session.
 
 ---
 
@@ -928,14 +1142,40 @@ Log::add(['SELECT 1', 'SELECT 2'], 'read');
 
 ## Driver Reference
 
-| Driver key | Database | DSN format |
-|---|---|---|
-| `mysql` / `mariadb` | MySQL, MariaDB | `mysql:host=...;port=...;dbname=...;charset=...` |
-| `pgsql` / `postgres` | PostgreSQL | `pgsql:host=...;port=...;dbname=...` |
-| `sqlite` / `sqlite3` | SQLite | `sqlite:/path/to/file` or `sqlite::memory:` |
-| `sqlsrv` | SQL Server | `sqlsrv:Server=...;Database=...` |
-| `oci` / `oracle` | Oracle | `oci:dbname=//host:port/service` |
-| `firebird` / `ibase` | Firebird | `firebird:dbname=host/port:/path/to/db` |
+Both columns of driver keys are accepted in config. The **canonical** name is what
+`Connection::driver()` reports and what `Schema::registerGrammar()` expects.
+
+| Canonical | Aliases accepted | Database | DSN format | Schema grammar |
+|---|---|---|---|---|
+| `mysql` | `mariadb` | MySQL, MariaDB | `mysql:host=...;port=...;dbname=...;charset=...` | built in |
+| `pgsql` | `postgres` | PostgreSQL | `pgsql:host=...;port=...;dbname=...` | built in |
+| `sqlite` | `sqlite3` | SQLite | `sqlite:/path/to/file` or `sqlite::memory:` | built in |
+| `sqlsrv` | — | SQL Server | `sqlsrv:Server=...;Database=...` | built in |
+| `oci` | `oracle` | Oracle | `oci:dbname=//host:port/service` | none — register one |
+| `firebird` | `ibase` | Firebird | `firebird:dbname=host/port:/path/to/db` | none — register one |
+
+Drivers marked *none* can connect, query, and back up, but `Schema` throws a
+`SchemaException` until you supply a grammar via
+[`Schema::registerGrammar()`](#custom-grammar). Two further differences apply to
+them: `Model::insert()` sends rows one statement at a time (neither database
+accepts multi-row `VALUES`), and it returns `''` rather than an id, since both
+require an explicit sequence/generator name.
+
+### PDO options
+
+Per-connection PDO attributes go in the `options` key and **override** the
+library defaults (`ERRMODE_EXCEPTION`, `FETCH_ASSOC`, `EMULATE_PREPARES => false`):
+
+```php
+Connection::add([
+    'driver'   => 'mysql',
+    'database' => 'myapp',
+    'options'  => [
+        PDO::ATTR_PERSISTENT => true,
+        PDO::ATTR_TIMEOUT    => 5,
+    ],
+]);
+```
 
 ### Type mapping per driver
 
@@ -976,3 +1216,7 @@ Log::add(['SELECT 1', 'SELECT 2'], 'read');
 - **ORDER direction** is validated — only `ASC` and `DESC` are accepted.
 - `update()` and `delete()` require a WHERE clause — calling either without one throws `InvalidArgumentException`, preventing accidental full-table mutations.
 - `unix_socket` is blocked for non-localhost hosts with a clear exception.
+- **Timezones** passed to `Connection::applyTimezone()` or the MySQL `timezone`
+  config key are validated against `/^[A-Za-z0-9_\/+\-:]+$/` before reaching SQL.
+  Neither MySQL nor PostgreSQL accepts a bound parameter in a `SET` statement, so
+  this allowlist is what keeps the statement safe.

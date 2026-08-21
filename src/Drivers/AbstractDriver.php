@@ -36,6 +36,10 @@ abstract class AbstractDriver implements DriverInterface
                 \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC,
                 \PDO::ATTR_EMULATE_PREPARES   => false,
             ];
-        return $default_options + ($config['options'] ?? []);
+
+        // User-supplied options must win over the defaults. The `+` union
+        // operator keeps the left-hand value on key collisions, which silently
+        // discarded any PDO attribute the caller tried to override.
+        return array_replace($default_options, $config['options'] ?? []);
     }
 }

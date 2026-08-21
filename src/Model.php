@@ -12,16 +12,21 @@ declare(strict_types=1);
 
 namespace Laika\Model;
 
-use Laika\Service\Init;
 use Laika\Model\Exceptions\ModelException;
 
 class Model
 {
-    /** @var \PDO PDO Database Connection Object*/
+    /**
+     * @var \PDO PDO Database Connection Object.
+     * Do not read directly — use pdo(), which refreshes a stale handle.
+     */
     protected \PDO $pdo;
 
-    /** @var string Database Driver (mysql, sqlite, pgsql, sqlsrv, oci, firebird.) */
+    /** @var string Canonical database driver (mysql, sqlite, pgsql, sqlsrv, oci, firebird). */
     protected string $driver;
+
+    /** @var int Connection registry generation this instance's $pdo came from */
+    private int $generation = -1;
 
     /** @var string Selected Columns */
     protected string $columns = '*';
@@ -77,23 +82,58 @@ class Model
 
     public function __construct(?string $connection = null)
     {
-        // Set Connection Name
-        if (!empty($connection)) $this->connection = $connection;
+        // Set Connection Name. With no explicit choice here and none declared
+        // on the subclass, honour Connection::setDefault().
+        if (!empty($connection)) {
+            $this->connection = $connection;
+        } elseif ($this->connection === 'default') {
+            $this->connection = Connection::getDefault();
+        }
 
         // Init DB for Connection
-        if (class_exists(Init::class)) Init::db($this->connection);
+        // if (class_exists("\\Laika\\Service\\Init")) \Laika\Service\Init::db($this->connection);
 
-        $this->pdo = Connection::get($this->connection);
-        $this->driver = Connection::driver($this->connection);
+        $this->refreshConnection();
     }
 
     /**
      * Get PDO Object
+     *
+     * Re-resolves from the Connection registry when the registry has changed
+     * since this instance was built (Connection::add()/close()/reconnect()
+     * invalidate live handles), so a Model never runs against a dead socket.
+     *
      * @return \PDO
      */
     public function pdo(): \PDO
     {
+        if ($this->generation !== Connection::generation()) {
+            $this->refreshConnection();
+        }
+
         return $this->pdo;
+    }
+
+    /**
+     * Get the canonical driver name for this model's connection.
+     */
+    public function driver(): string
+    {
+        if ($this->generation !== Connection::generation()) {
+            $this->refreshConnection();
+        }
+
+        return $this->driver;
+    }
+
+    /**
+     * Pull a fresh PDO handle and driver name from the registry.
+     */
+    private function refreshConnection(): void
+    {
+        $this->pdo        = Connection::get($this->connection);
+        $this->driver     = Connection::driver($this->connection);
+        $this->generation = Connection::generation();
     }
 
     /**
@@ -450,7 +490,7 @@ class Model
         Log::add($sql, $this->connection);
 
         // Execute Query
-        $stmt = $this->pdo->prepare($sql);
+        $stmt = $this->pdo()->prepare($sql);
         $stmt->execute($this->bindings);
 
         // Fetch Rows
@@ -504,7 +544,7 @@ class Model
         Log::add($sql, $this->connection);
 
         // Execute Query
-        $stmt = $this->pdo->prepare($sql);
+        $stmt = $this->pdo()->prepare($sql);
         $stmt->execute($this->bindings);
         $result = $stmt->fetch();
 
@@ -571,6 +611,12 @@ class Model
 
     /**
      * Insert Row('s)
+     *
+     * Oracle and Firebird reject multi-row VALUES, so on those drivers the rows
+     * are sent one statement at a time instead of batched. They also have no
+     * bare lastInsertId() — this returns '' there, and the caller must read the
+     * sequence/generator itself.
+     *
      * @param array{} $data Insert Row('s) Data. Example: ['name' => 'John', 'age' => 30] or [0 => ['name' => 'John'], ['name' => 'Doe']]
      * @throws \InvalidArgumentException|\RuntimeException
      * @return string|false Returns the last inserted ID
@@ -597,8 +643,17 @@ class Model
         // Sanitize Table
         $tbl = $this->sanitize($this->table);
 
+        $driver = $this->driver();
+
+        // Oracle needs INSERT ALL and Firebird needs EXECUTE BLOCK to batch;
+        // rather than carry two more dialects, send those one row per statement.
+        $rowsPerStatement = in_array($driver, ['oci', 'firebird'], true) ? 1 : 1000;
+
+        $stmt        = null;
+        $preparedSql = null;
+
         // Chunk rows into max 1000 per query
-        foreach (array_chunk($rows, 1000) as $chunk) {
+        foreach (array_chunk($rows, $rowsPerStatement) as $chunk) {
 
             // Build placeholders for this chunk
             $rowPlaceholders = '(' . implode(', ', array_fill(0, count($columns), '?')) . ')';
@@ -620,9 +675,14 @@ class Model
                 $bindings = array_merge($bindings, array_values($row));
             }
 
-            // Execute
+            // Execute. Every full chunk produces identical SQL, so the handle is
+            // reused rather than re-prepared — this matters most on oci/firebird,
+            // where the chunk is a single row.
             try {
-                $stmt = $this->pdo->prepare($sql);
+                if ($sql !== $preparedSql) {
+                    $stmt        = $this->pdo()->prepare($sql);
+                    $preparedSql = $sql;
+                }
                 $stmt->execute($bindings);
             } catch (\Throwable $th) {
                 throw new \RuntimeException($th->getMessage(), (int) $th->getCode(), $th);
@@ -631,7 +691,14 @@ class Model
 
         // Reset builder state
         $this->reset();
-        return $this->pdo->lastInsertId();
+
+        // PDO_OCI and PDO_Firebird require the sequence/generator name here and
+        // return '' or throw without one. Don't pretend to have an id.
+        if (in_array($driver, ['oci', 'firebird'], true)) {
+            return '';
+        }
+
+        return $this->pdo()->lastInsertId();
     }
 
     /**
@@ -655,7 +722,7 @@ class Model
             // Add Queries to Log
             Log::add($sql, $this->connection);
 
-            $stmt = $this->pdo->prepare($sql);
+            $stmt = $this->pdo()->prepare($sql);
             $stmt->execute($this->bindings);
 
             $rows = $stmt->fetchAll();
@@ -716,7 +783,7 @@ class Model
         Log::add($sql, $this->connection);
 
         // Execute Query
-        $stmt = $this->pdo->prepare($sql);
+        $stmt = $this->pdo()->prepare($sql);
         $stmt->execute(array_merge(array_values($data), $this->bindings));
 
         // Get Affected Rows
@@ -753,7 +820,7 @@ class Model
         Log::add($sql, $this->connection);
     
         // Execute Query
-        $stmt = $this->pdo->prepare($sql);
+        $stmt = $this->pdo()->prepare($sql);
         $stmt->execute($this->bindings);
 
         // Get Affected Rows
@@ -801,7 +868,7 @@ class Model
         Log::add($sql, $this->connection);
     
         // Execute Query
-        $stmt = $this->pdo->prepare($sql);
+        $stmt = $this->pdo()->prepare($sql);
         $stmt->execute(array_merge([$number], $this->bindings));
 
         // Reset Query Builder
@@ -848,7 +915,7 @@ class Model
         Log::add($sql, $this->connection);
     
         // Execute Query
-        $stmt = $this->pdo->prepare($sql);
+        $stmt = $this->pdo()->prepare($sql);
         $stmt->execute(array_merge([$number], $this->bindings));
 
         // Reset Query Builder
@@ -882,7 +949,7 @@ class Model
         // Add Queries to Log
         Log::add($sql, $this->connection);
         
-        $stmt = $this->pdo->prepare($sql);
+        $stmt = $this->pdo()->prepare($sql);
         $stmt->execute($bindings);
         return $stmt;
     }
@@ -911,48 +978,47 @@ class Model
 
     /**
      * Run a Transactional Callback
+     *
+     * Nested calls on the same connection are supported via savepoints: only
+     * the outermost call opens a real transaction, and an inner failure rolls
+     * back to its own savepoint rather than discarding the outer transaction.
+     *
      * @param callable $callback Callback Function. Use Model as Argument. Example: function(Model $model) { ... }
      * @return mixed Returns the result of the callback
      * @throws \RuntimeException Throws an exception if the transaction fails
      */
     public function transaction(callable $callback): mixed
     {
-        $this->pdo->beginTransaction();
+        // Make sure a stale handle is refreshed before the transaction opens —
+        // reconnecting mid-transaction would silently discard it.
+        $this->pdo();
+
+        Connection::beginTransaction($this->connection);
 
         try {
             $result = $callback($this);
-            $this->pdo->commit();
+            Connection::commit($this->connection);
             return $result;
         } catch (\Throwable $e) {
-            $this->pdo->rollBack();
-            throw new \RuntimeException("Table [{$this->table}] Transaction Failed [{$e->getMessage()}]", (int) $e->getCode(), $e);
+            try {
+                Connection::rollBack($this->connection);
+            } catch (\Throwable $rollbackError) {
+                // Connection already gone — the original failure is the one
+                // worth reporting, so swallow this and fall through.
+            }
+
+            $table = $this->table ?? 'unknown';
+            throw new \RuntimeException("Table [{$table}] Transaction Failed [{$e->getMessage()}]", (int) $e->getCode(), $e);
         }
     }
 
     /**
      * Generate UID
-     * @param int $maxAttempts Maximum Try if UID Already Exists
      * @return string
-     * @throws \RuntimeException
      */
-    public function uid(int $maxAttempts = 10): string
+    public function uid(): string
     {        
-        for ($attempt = 0; $attempt < $maxAttempts; $attempt++) {
-            $time = substr(str_replace('.', '', (string) microtime(true)), -6);
-            $str1 = bin2hex(random_bytes(3));
-            $str2 = bin2hex(random_bytes(3));
-            $str3 = bin2hex(random_bytes(3));
-            $str4 = bin2hex(random_bytes(3));
-            $uid = strtoupper("UID-{$str1}-{$str2}-{$str3}-{$str4}-{$time}");
-            
-            $exists = $this->select($this->uid)->where([$this->uid => $uid])->count() > 0;
-
-            if (!$exists) {
-                return $uid;
-            }
-        }
-        
-        throw new \RuntimeException("Failed to Generate Unique UID After [{$maxAttempts}] Attempts");
+        return implode('-', str_split(bin2hex(random_bytes(16)), 8));
     }
 
     ####################################################################
@@ -1037,7 +1103,6 @@ class Model
                     break;
 
                 case 'oci':
-                case 'oracle':
                     if ($offset !== null) {
                         if (empty($this->orderBy)) {
                             throw new \InvalidArgumentException(
@@ -1051,7 +1116,6 @@ class Model
                     break;
 
                 case 'firebird':
-                case 'ibase':
                     $start = ($offset ?? 0) + 1;
                     $end   = $start + $this->limit - 1;
                     $sql  .= " ROWS {$start} TO {$end}";
@@ -1140,9 +1204,9 @@ class Model
     private function wrapIdent(string $name, string $driver): string
     {
         return match ($driver) {
-            'mysql', 'mariadb' => '`' . str_replace('`', '``', $name) . '`',
-            'sqlsrv'           => '[' . str_replace(']', ']]', $name) . ']',
-            default            => '"' . str_replace('"', '""', $name) . '"',
+            'mysql'  => '`' . str_replace('`', '``', $name) . '`',
+            'sqlsrv' => '[' . str_replace(']', ']]', $name) . ']',
+            default  => '"' . str_replace('"', '""', $name) . '"',
         };
     }
 

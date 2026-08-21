@@ -76,18 +76,13 @@ class PgSqlGrammar extends Grammar
     protected function typeBinary(array $col): string       { return 'OID'; }
     protected function typeUid(array $col): string          { return 'UUID'; }
     protected function autoIncrementKeyword(): string       { return ''; } // handled by SERIAL
-    protected function typeEnum(array $col): string
-    {
-        $quoted = implode(', ', array_map(
-            fn($v) => "'" . addslashes($v) . "'",
-            $col['values'] ?? []
-        ));
-        $colName = $col['name'];
-        return "VARCHAR(255) CHECK ({$colName} IN ({$quoted}))";
-    }
 
-    protected function typeSet(array $col): string
-    {
-        return 'TEXT';
-    }
+    /** PostgreSQL has no TINYINT — SMALLINT is the narrowest integer. */
+    protected function typeTinyInteger(array $col): string  { return 'SMALLINT'; }
+
+    /** PostgreSQL spells it DOUBLE PRECISION; bare DOUBLE is a syntax error. */
+    protected function typeDouble(array $col): string       { return 'DOUBLE PRECISION'; }
+
+    // typeEnum() and typeSet() are inherited — the base already emits the
+    // VARCHAR + CHECK emulation and TEXT respectively.
 }

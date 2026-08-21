@@ -12,6 +12,8 @@ declare(strict_types=1);
 
 namespace Laika\Model\Drivers;
 
+use Laika\Model\Connection;
+
 class MySqlDriver extends AbstractDriver
 {
     public function getName(): string
@@ -45,9 +47,19 @@ class MySqlDriver extends AbstractDriver
 
     public function getOptions(array $config): array
     {
-        return parent::getOptions($config) + [
-            \PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES '{$this->getCharset($config)}'",
-            \PDO::MYSQL_ATTR_INIT_COMMAND => "SET time_zone = '+00:00'",
-        ];
+        $options = parent::getOptions($config);
+
+        // MYSQL_ATTR_INIT_COMMAND accepts a single statement, so charset and
+        // timezone have to be combined. Assigning it twice (as this used to)
+        // meant only the last assignment survived and SET NAMES never ran.
+        $init = "SET NAMES '{$this->getCharset($config)}'";
+
+        if (!empty($config['timezone'])) {
+            $timezone = Connection::assertTimezone((string) $config['timezone']);
+            $init .= ", time_zone = '{$timezone}'";
+        }
+
+        // An explicit init command in the user's options still takes precedence.
+        return $options + [\PDO::MYSQL_ATTR_INIT_COMMAND => $init];
     }
 }

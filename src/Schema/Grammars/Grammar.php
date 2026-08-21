@@ -13,6 +13,7 @@ declare(strict_types=1);
 namespace Laika\Model\Schema\Grammars;
 
 use Laika\Model\Schema\Blueprint;
+use Laika\Model\Schema\Expression;
 
 abstract class Grammar
 {
@@ -38,12 +39,22 @@ abstract class Grammar
         return '"' . str_replace('"', '""', $table) . '"';
     }
 
+    /**
+     * Whether the driver understands the UNSIGNED column modifier.
+     * MySQL/MariaDB is the only one that does — everywhere else it is a syntax
+     * error, so it must not be emitted.
+     */
+    protected function supportsUnsigned(): bool
+    {
+        return false;
+    }
+
     /** Convert a Column Definition Array to SQL Fragment */
     protected function columnToSql(array $col): string
     {
         $sql = $this->wrapColumn($col['name']) . ' ' . $this->resolveType($col);
 
-        if (!empty($col['unsigned']) && !str_contains($sql, 'UNSIGNED')) {
+        if ($this->supportsUnsigned() && !empty($col['unsigned']) && !str_contains($sql, 'UNSIGNED')) {
             $sql .= ' UNSIGNED';
         }
 
@@ -57,12 +68,15 @@ abstract class Grammar
             $sql .= ' DEFAULT ' . $this->formatDefault($col['default']);
         }
 
-        if (!empty($col['auto_increment'])) {
-            $sql .= ' ' . $this->autoIncrementKeyword();
+        // autoIncrementKeyword() and columnComment() return '' on drivers that
+        // have no equivalent — appending unconditionally would leave a trailing
+        // space on every such column.
+        if (!empty($col['auto_increment']) && ($keyword = $this->autoIncrementKeyword()) !== '') {
+            $sql .= ' ' . $keyword;
         }
 
-        if (!empty($col['comment'])) {
-            $sql .= ' ' . $this->columnComment($col['comment']);
+        if (!empty($col['comment']) && ($comment = $this->columnComment($col['comment'])) !== '') {
+            $sql .= ' ' . $comment;
         }
 
         return $sql;
@@ -155,23 +169,126 @@ abstract class Grammar
         return 'TEXT';
     }
 
-    protected function autoIncrementKeyword(): string     { return 'AUTO_INCREMENT'; }
+    /** Dialect-neutral: grammars that need a keyword must opt in explicitly. */
+    protected function autoIncrementKeyword(): string     { return ''; }
 
     protected function columnComment(string $comment): string { return ''; }
 
     protected function formatDefault(mixed $value): string
     {
-        if (is_null($value))        return  'NULL';
-        if (is_bool($value))        return  $value ? '1' : '0';
-        if (is_numeric($value))     return  (string) $value;
-        if (is_callable($value))    return  addslashes((string) $value());
-        return "'" . addslashes((string)$value) . "'";
+        if (is_null($value))    return 'NULL';
+        if (is_bool($value))    return $value ? '1' : '0';
+        if (is_numeric($value)) return (string) $value;
+
+        // Raw, unquoted SQL — e.g. CURRENT_TIMESTAMP. Expression is the explicit
+        // form; a Closure is the legacy one used by Blueprint::timestamp().
+        // Note this must NOT be is_callable(): that is true for ordinary strings
+        // like 'time' or 'count', so a plain DEFAULT 'time' called time().
+        if ($value instanceof Expression) return (string) $value;
+        if ($value instanceof \Closure)   return (string) $value();
+
+        return "'" . addslashes((string) $value) . "'";
+    }
+
+    /**
+     * Prefix a constraint name, without double-prefixing.
+     *
+     * ltrim() would be wrong here — it strips a *character class*, so
+     * ltrim('queue', 'uq_') is 'eue' and ltrim('did', 'idx_') is ''.
+     */
+    protected function prefixName(string $prefix, string $base): string
+    {
+        return str_starts_with($base, $prefix) ? $base : $prefix . $base;
+    }
+
+    /**
+     * Compile a standalone CREATE INDEX statement.
+     *
+     * Inline `INDEX name (cols)` inside CREATE TABLE is MySQL-only syntax, so
+     * every other driver emits its indexes as separate statements. Callers get
+     * them from compileIndexes().
+     *
+     * @param array{columns: string[], name?: ?string} $index
+     */
+    public function compileCreateIndex(string $table, array $index): string
+    {
+        $base = $index['name'] ?? implode('_', $index['columns']);
+
+        // PostgreSQL puts indexes in the schema namespace and SQLite puts them
+        // in the database namespace, so a bare 'idx_userid' collides the moment
+        // two tables index a column of the same name. Qualifying is the safe
+        // default; MySQL and SQL Server scope index names to the table and
+        // override qualifyIndexName() to keep the source's name.
+        $name = $this->prefixName('idx_', $this->qualifyIndexName($table, $base));
+        $cols = implode(', ', array_map([$this, 'wrapColumn'], $index['columns']));
+
+        return "CREATE INDEX {$this->wrapColumn($name)} ON {$this->wrapTable($table)} ({$cols});";
+    }
+
+    /**
+     * Qualify a bare index name with its table so it is unique schema-wide.
+     *
+     * Already-qualified names are left alone, so a source that names its index
+     * after the table does not end up with the table twice.
+     */
+    protected function qualifyIndexName(string $table, string $base): string
+    {
+        return $this->qualifyWithTable($table, $base, 'idx_');
+    }
+
+    /**
+     * Qualify a UNIQUE/FOREIGN KEY constraint name with its table.
+     *
+     * PostgreSQL backs a UNIQUE constraint with an index in the schema
+     * namespace, and SQL Server scopes constraint names to the schema outright,
+     * so `uq_asset_type` on two tables collides on both. MySQL scopes them to
+     * the table and overrides this to keep the source's name.
+     */
+    protected function qualifyConstraintName(string $table, string $base, string $prefix): string
+    {
+        return $this->qualifyWithTable($table, $base, $prefix);
+    }
+
+    /**
+     * Prepend the table name to $base unless it is already qualified.
+     *
+     * $prefix is stripped before the check and left for prefixName() to re-add,
+     * so 'idx_userid' on 'tblemails' becomes 'tblemails_userid' rather than
+     * 'tblemails_idx_userid'.
+     */
+    private function qualifyWithTable(string $table, string $base, string $prefix): string
+    {
+        $stem = str_starts_with($base, $prefix) ? substr($base, strlen($prefix)) : $base;
+
+        if (str_starts_with($stem, $table . '_') || $stem === $table) {
+            return $base;
+        }
+
+        return $table . '_' . $stem;
+    }
+
+    /**
+     * Every CREATE INDEX statement a blueprint needs, in order.
+     *
+     * Empty on MySQL, where compileCreate() emits indexes inline instead.
+     *
+     * @return string[]
+     */
+    public function compileIndexes(Blueprint $blueprint): array
+    {
+        $table = $blueprint->getTable();
+
+        return array_map(
+            fn(array $index): string => $this->compileCreateIndex($table, $index),
+            $blueprint->getIndexes()
+        );
     }
 
     /** Build PRIMARY KEY + INDEX + UNIQUE + FOREIGN constraint SQL fragments */
     protected function compileConstraints(Blueprint $blueprint): array
     {
         $lines = [];
+        $table = $blueprint->getTable();
 
         // Primary keys
         if ($pk = $blueprint->getPrimaryKey()) {
@@ -182,25 +299,22 @@ abstract class Grammar
         // Unique
         foreach ($blueprint->getUniques() as $unique) {
             $base = $unique['name'] ?? implode('_', $unique['columns']);
-            $name = 'uq_' . ltrim($base, 'uq_');
+            $name = $this->prefixName('uq_', $this->qualifyConstraintName($table, $base, 'uq_'));
             $cols = implode(', ', array_map([$this, 'wrapColumn'], $unique['columns']));
             $lines[] = "CONSTRAINT {$this->wrapColumn($name)} UNIQUE ({$cols})";
         }
 
-        // Indexes (added separately via ALTER in some dbs; here inline for simplicity)
-        foreach ($blueprint->getIndexes() as $index) {
-            $base = $index['name'] ?? implode('_', $index['columns']);
-            $name = 'idx_' . ltrim($base, 'idx_');
-            $cols = implode(', ', array_map([$this, 'wrapColumn'], $index['columns']));
-            $lines[] = "INDEX {$this->wrapColumn($name)} ({$cols})";
-        }
+        // Indexes are NOT emitted here. Inline `INDEX name (cols)` is MySQL-only
+        // syntax; MySqlGrammar overrides this method to add them. Every other
+        // driver gets them from compileIndexes() as separate CREATE INDEX
+        // statements.
 
         // Foreign keys
         foreach ($blueprint->getForeignKeys() as $fk) {
             $col  = $this->wrapColumn($fk['column']);
             $ref  = $this->wrapTable($fk['referenceTable']) . '(' . $this->wrapColumn($fk['referenceColumn']) . ')';
             $base = $fk['name'] ?? $fk['column'];
-            $name = 'fk_' . ltrim($base, 'fk_');
+            $name = $this->prefixName('fk_', $this->qualifyConstraintName($table, $base, 'fk_'));
             $line = "CONSTRAINT {$this->wrapColumn($name)} FOREIGN KEY ({$col}) REFERENCES {$ref}";
             if (!empty($fk['onDelete'])) $line .= " ON DELETE {$fk['onDelete']}";
             if (!empty($fk['onUpdate'])) $line .= " ON UPDATE {$fk['onUpdate']}";
