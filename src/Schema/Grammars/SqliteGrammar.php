@@ -113,7 +113,7 @@ class SqliteGrammar extends Grammar
      * appearing before PRIMARY KEY, so these columns bypass the shared emitter.
      * UNSIGNED is handled by supportsUnsigned() returning false in the base.
      */
-    protected function columnToSql(array $col): string
+    public function columnToSql(array $col): string
     {
         if (in_array($col['type'], ['id', 'bigId'], true)) {
             // Comments have no inline form in SQLite and are dropped here.

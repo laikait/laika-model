@@ -61,6 +61,7 @@ queries and backup, but ship no built-in schema grammar — see
   - [Custom Grammar](#custom-grammar)
 - [SQL Converter](#sql-converter)
   - [Converting a dump](#converting-a-dump)
+  - [Migrating between live databases](#migrating-between-live-databases)
   - [Warnings and the report](#warnings-and-the-report)
   - [What converts](#what-converts)
   - [What does not convert](#what-does-not-convert)
@@ -412,11 +413,22 @@ $active = $users->where(['active' => 1])->count();
 // Check existence
 $exists = $users->where(['email' => 'alice@example.com'])->exists();
 
-// First matching row — requires WHERE clause
+// First matching row — requires WHERE clause. null when nothing matched.
 $user = $users->where(['id' => 1])->first();
 
-// First or throw RuntimeException
+// First or throw ModelException
 $user = $users->where(['id' => 1])->firstOrFail();
+
+// Stream a large result set instead of materialising it. Prefer this over
+// get() when the table will not fit in memory.
+foreach ($users->where(['active' => 1])->cursor() as $user) {
+    // one row at a time
+}
+
+// Batches. Return false from the callback to stop early.
+$users->chunk(500, function (array $rows) {
+    // ...
+});
 
 // Single column from all matching rows
 $emails = $users->where(['active' => 1])->pluck('email');
@@ -504,10 +516,16 @@ $users->where(['id' => 1])->soft()->delete();
 // Restore — sets deleted_at back to null
 $users->where(['id' => 1])->restore();
 
-// Query only soft-deleted rows
+// Trashed rows are hidden from reads automatically when the model declares
+// `protected bool $softDelete = true;`.
+
+// Include soft-deleted rows alongside the live ones
 $users->withTrash()->get();
 
-// Query only non-deleted rows
+// Only the soft-deleted rows
+$users->onlyTrashed()->get();
+
+// Explicitly exclude them (already the default on a soft-delete model)
 $users->withoutTrash()->get();
 ```
 
@@ -670,14 +688,25 @@ protected array $casts = [
 
 | Cast type | Input from DB | Output |
 |---|---|---|
-| `int` / `integer` | `"42"` | `42` |
+| `int` / `integer` | `"42"` | `42` — kept as a string past `PHP_INT_MAX` |
 | `float` / `double` | `"3.14"` | `3.14` |
-| `bool` / `boolean` | `"0"`, `""`, `null` | `false` — all others `true` |
+| `decimal` | `"19.9900"` | `"19.9900"` — string, so no rounding error |
+| `bool` / `boolean` | `"0"`, `""`, `"f"`, `"off"`, `"no"` | `false` — all others `true` |
 | `json` / `array` | `'{"a":1}'` | `['a' => 1]` |
-| `serialize` | `'a:1:{...}'` | original PHP value |
+| `serialize` | `'a:1:{...}'` | original PHP value (objects are not instantiated) |
 | `string` | `42` | `"42"` |
 
-Casting is applied automatically on `get()`, `first()`, `firstOrFail()`, `chunk()`, and `pluck()`.
+Casting is applied automatically on `get()`, `first()`, `find()`, `firstOrFail()`,
+`chunk()`, `cursor()` and `pluck()`.
+
+**`NULL` always survives a cast.** A nullable `int` column reads back as `null`,
+not `0`, so "unset" stays distinguishable from "zero".
+
+**An unknown cast name throws** a `ModelException` rather than passing the value
+through untouched, so a typo like `'integar'` surfaces immediately.
+
+Rows are returned as arrays or `stdClass` objects depending on the connection's
+`PDO::ATTR_DEFAULT_FETCH_MODE`; both are supported throughout.
 
 **Note:** Values must be serialized manually before `insert()` / `update()`:
 
@@ -1003,7 +1032,7 @@ Translate existing SQL from one driver dialect to another — a one-line
 `CREATE TABLE`, a `.sql` file, or a multi-gigabyte `mysqldump` backup.
 
 ```php
-use Laika\Model\Converter\Converter;
+use Laika\Model\Converter;
 
 $converter = new Converter(from: 'mysql', to: 'pgsql');
 
@@ -1015,8 +1044,9 @@ echo $converter->convert("CREATE TABLE `t` (`id` int unsigned NOT NULL AUTO_INCR
 
 Driver aliases work exactly as they do in connection config, so
 `new Converter('mariadb', 'postgres')` is the same as `new Converter('mysql', 'pgsql')`.
-Supported targets are `mysql`, `pgsql`, `sqlite` and `sqlsrv` — the four drivers
-that have a Schema grammar.
+Supported targets are `mysql`, `pgsql`, `sqlite`, `sqlsrv`, `oci` and `firebird` —
+every driver with a Schema grammar. Oracle and Firebird are targets only: see
+[Driver Reference](#driver-reference) for their version floors.
 
 ### Converting a dump
 
@@ -1046,6 +1076,71 @@ you mean.
 `apply()` disables foreign key checks for the duration so the dump's table order
 does not matter, re-enables them even if a statement throws, and refuses to run
 against a connection whose driver is not the converter's target.
+
+### Migrating between live databases
+
+`migrate()` joins the two halves together: it exports the source database as
+plain SQL, converts it, and executes it against the target — no dump file to
+manage by hand.
+
+```php
+Connection::add(['driver' => 'mysql', /* ... */], 'legacy');
+Connection::add(['driver' => 'pgsql', /* ... */], 'modern');
+
+// Dialects are read from the connections, so they cannot disagree.
+$executed = Converter::between('legacy', 'modern')->migrate();
+
+// Or on a converter you built yourself:
+$executed = (new Converter('mysql', 'pgsql'))->migrate('legacy', 'modern');
+
+// Keep the intermediate SQL for auditing instead of discarding it.
+Converter::between('legacy', 'modern')->migrate(keep: __DIR__ . '/migration.sql');
+```
+
+The source is only read from. The **target is overwritten**: the generated SQL
+drops each table before recreating it, so an existing table of the same name is
+replaced. Without `keep:` the intermediate file is a temp file, removed
+afterwards even if the migration fails partway.
+
+Both connections are checked before anything runs — a source or target whose
+driver disagrees with the converter's dialects throws rather than producing
+garbage deep inside the parser.
+
+#### Source support
+
+`Backup::dump()` produces the SQL, and is deliberately separate from
+`Backup::create()`. `create()` writes whatever the engine's own restore tooling
+expects — a binary file copy for SQLite, a `.bak` for SQL Server — which is
+right for a same-engine round trip but unreadable to anything else.
+
+| Source driver | How `dump()` exports | Needs |
+|---|---|---|
+| `mysql` / `mariadb` | `mysqldump` | `mysqldump` on PATH |
+| `pgsql` | `pg_dump --inserts --no-owner --no-privileges` | `pg_dump` on PATH |
+| `sqlite` | `sqlite_master` + generated INSERTs | nothing |
+| `sqlsrv` | `information_schema` + generated INSERTs | nothing |
+| `firebird` / `oci` | not supported as a *source* — throws | — |
+
+Two notes worth knowing:
+
+- **PostgreSQL sources prefer `--inserts`**, which `dump()` passes for you.
+  Plain `pg_dump` writes table data as a `COPY ... FROM stdin` bulk stream
+  instead of statements. That is read too — see below — but `--inserts` keeps
+  the intermediate file plain SQL throughout.
+- **SQLite is read over PDO, not through the `sqlite3` CLI.** Recent versions of
+  `.dump` wrap any string containing a control character in a `unistr()` call,
+  and no other engine — including the SQLite bundled with PDO — has that
+  function, so a single newline in your data would break the migration.
+
+Firebird and Oracle are conversion **targets only**. They have a Schema grammar,
+so SQL can be written *for* them, but no type lexicon to read their dialect back —
+and their export tools write binary archives (`expdp`, `gbak`) rather than SQL, so
+there would be nothing for `dump()` to hand over in any case.
+
+> **Credentials on the command line.** For MySQL and SQL Server, `Backup` passes
+> the password as a CLI argument, which is visible in the host's process list.
+> PostgreSQL uses the `PGPASSWORD` environment variable instead. Keep this in
+> mind on shared machines.
 
 ### Warnings and the report
 
@@ -1084,7 +1179,9 @@ Reuse an instance across sources by calling `$converter->reset()`.
 | `CREATE TABLE` | Columns, types, defaults, nullability, comments, `PRIMARY KEY`, `UNIQUE`, `KEY`/`INDEX`, single-column `FOREIGN KEY` with `ON DELETE`/`ON UPDATE`, and table options (`ENGINE`, `CHARSET`, `COLLATE`) |
 | `CREATE INDEX` | Rewritten for the target, including the inline-vs-standalone difference |
 | `INSERT` | Extended inserts are split per row; literals are re-encoded (see below) |
+| `COPY … FROM stdin` | PostgreSQL's bulk format is decoded into `INSERT`s — tab-separated fields, `\N` for NULL, backslash escapes — one row at a time, so a block larger than memory still converts |
 | `DROP TABLE` | Split per table, `IF EXISTS` preserved |
+| `ALTER TABLE` | `ADD CONSTRAINT` for `PRIMARY KEY`, `UNIQUE` and `FOREIGN KEY`, plus PostgreSQL's `SET DEFAULT nextval()`. `ONLY` is accepted and ignored |
 | Auto-increment | `AUTO_INCREMENT` ⇄ `SERIAL`/`BIGSERIAL` ⇄ `IDENTITY(1,1)` ⇄ `INTEGER PRIMARY KEY AUTOINCREMENT` |
 | `ENUM` | Native on MySQL, `VARCHAR + CHECK` elsewhere |
 | Defaults | `now()`, `current_timestamp()`, `getdate()` and friends all normalise to `CURRENT_TIMESTAMP`; PostgreSQL `nextval()` is dropped in favour of the target's own auto-increment |
@@ -1113,9 +1210,24 @@ composite foreign keys; `CHECK`, `FULLTEXT` and `SPATIAL` constraints. Each is
 detected and reported — passed through unchanged where that is safe, dropped
 with a warning where it is not.
 
-`CREATE DATABASE`, `USE` and session statements (`SET NAMES`, `START TRANSACTION`)
-are dropped: the target database is chosen by the connection, and the target
-manages its own session.
+`CREATE DATABASE`, `USE` and session statements (`SET NAMES`, `START TRANSACTION`,
+`PRAGMA`, `SELECT pg_catalog.set_config()`) are dropped: the target database is
+chosen by the connection, and the target manages its own session. So are psql
+meta-commands (`\restrict`, `\unrestrict`, `\connect`) — they are client
+instructions rather than SQL.
+
+`CREATE SEQUENCE` and `ALTER SEQUENCE` are dropped too, but not the meaning:
+PostgreSQL keeps a serial column's identity in a separate sequence object that
+MySQL and SQLite have no equivalent for, so the converter reads the accompanying
+`SET DEFAULT nextval()` and re-applies it as the target's own auto-increment.
+
+> **A PostgreSQL source needs a target that supports `ALTER TABLE ADD CONSTRAINT`.**
+> Unlike mysqldump, pg_dump does not write a self-contained `CREATE TABLE` — it
+> emits a bare table and reattaches the primary key, the unique constraints and
+> the identity afterwards. MySQL, PostgreSQL and SQL Server all accept that.
+> **SQLite cannot add a constraint to an existing table**, so a pgsql → sqlite
+> migration loses its primary key and foreign keys; each loss is reported in
+> `report()` rather than passing silently.
 
 ---
 
@@ -1151,15 +1263,33 @@ Both columns of driver keys are accepted in config. The **canonical** name is wh
 | `pgsql` | `postgres` | PostgreSQL | `pgsql:host=...;port=...;dbname=...` | built in |
 | `sqlite` | `sqlite3` | SQLite | `sqlite:/path/to/file` or `sqlite::memory:` | built in |
 | `sqlsrv` | — | SQL Server | `sqlsrv:Server=...;Database=...` | built in |
-| `oci` | `oracle` | Oracle | `oci:dbname=//host:port/service` | none — register one |
-| `firebird` | `ibase` | Firebird | `firebird:dbname=host/port:/path/to/db` | none — register one |
+| `oci` | `oracle` | Oracle | `oci:dbname=//host:port/service` | built in (12c+) |
+| `firebird` | `ibase` | Firebird | `firebird:dbname=host/port:/path/to/db` | built in (3.0+) |
 
-Drivers marked *none* can connect, query, and back up, but `Schema` throws a
-`SchemaException` until you supply a grammar via
-[`Schema::registerGrammar()`](#custom-grammar). Two further differences apply to
-them: `Model::insert()` sends rows one statement at a time (neither database
-accepts multi-row `VALUES`), and it returns `''` rather than an id, since both
-require an explicit sequence/generator name.
+Every driver now ships with a grammar; [`Schema::registerGrammar()`](#custom-grammar)
+remains available to override one or to add a grammar for a custom driver.
+
+**Oracle and Firebird carry version floors.** Both grammars emit
+`GENERATED BY DEFAULT AS IDENTITY`, which needs **Oracle 12c or later** and
+**Firebird 3.0 or later**; on older releases an auto-numbered column needs a
+sequence/generator plus a `BEFORE INSERT` trigger, which these grammars do not
+write. Firebird 3 also caps identifiers at 31 characters, so generated index and
+constraint names longer than that are truncated with a short hash suffix to keep
+them unique. Neither engine has `DROP TABLE IF EXISTS`, so that compiles to a
+PL/SQL block or an `EXECUTE BLOCK` guarded on `RDB$RELATIONS`.
+
+**Firebird cannot rename a table.** `Schema::rename()` throws a `SchemaException`
+there rather than emitting SQL that cannot work — recreate the table, copy the
+rows and drop the original.
+
+Identifiers are quoted and keep the case you give them, matching what the query
+builder emits, so `Schema` and `Model` always agree on a name. Both engines fold
+*unquoted* identifiers to upper case, so a bare `SELECT * FROM users` typed
+straight into SQL\*Plus or isql will not find a table created as `users`.
+
+Two further differences apply to both: `Model::insert()` sends rows one statement
+at a time (neither database accepts multi-row `VALUES`), and it returns `''`
+rather than an id, since both require an explicit sequence/generator name.
 
 ### PDO options
 

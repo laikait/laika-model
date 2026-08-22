@@ -100,7 +100,12 @@ final class LiteralTranslator
         }
 
         if ($columnType === 'boolean') {
-            return $this->booleanLiteral($raw === '1' || strcasecmp($raw, 'true') === 0);
+            // PostgreSQL writes booleans as 't'/'f' — in COPY rows always, and
+            // in ordinary INSERTs too. Without the single-letter form every
+            // true silently became false.
+            return $this->booleanLiteral(
+                $raw === '1' || strcasecmp($raw, 'true') === 0 || strcasecmp($raw, 't') === 0
+            );
         }
 
         return $this->encode($raw);

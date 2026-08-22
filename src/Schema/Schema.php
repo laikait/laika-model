@@ -20,6 +20,8 @@ use Laika\Model\Schema\Grammars\MySqlGrammar;
 use Laika\Model\Schema\Grammars\PgSqlGrammar;
 use Laika\Model\Schema\Grammars\SqlSrvGrammar;
 use Laika\Model\Schema\Grammars\SqliteGrammar;
+use Laika\Model\Schema\Grammars\OracleGrammar;
+use Laika\Model\Schema\Grammars\FirebirdGrammar;
 
 /**
  * Schema builder.
@@ -60,6 +62,10 @@ final class Schema
         'sqlsrv'   => SqlSrvGrammar::class,
         'sqlite'   => SqliteGrammar::class,
         'sqlite3'  => SqliteGrammar::class,
+        'oci'      => OracleGrammar::class,
+        'oracle'   => OracleGrammar::class,
+        'firebird' => FirebirdGrammar::class,
+        'ibase'    => FirebirdGrammar::class,
     ];
 
     private function __construct(string $connection)
@@ -188,8 +194,12 @@ final class Schema
         $stmt   = $pdo->prepare($sql);
         $driver = $this->driverName();
 
-        if ($driver === 'sqlite') {
-            // sqlite_master query only needs the table name
+        // sqlite_master, USER_TABLES and RDB$RELATIONS are all already scoped to
+        // the open database, so they take the table name alone. Binding the
+        // configured "database" would never match on Oracle or Firebird anyway:
+        // there it is a TNS/service name or a path to an .fdb file, not a
+        // schema owner.
+        if (in_array($driver, ['sqlite', 'oci', 'firebird'], true)) {
             $stmt->execute([$table]);
         } else {
             $db = $this->config()['database'] ?? '';
@@ -212,8 +222,8 @@ final class Schema
         $stmt   = $pdo->prepare($sql);
         $driver = $this->driverName();
 
-        if ($driver === 'sqlite') {
-            // pragma_table_info(tableName) — args are (table, column)
+        // As in hasTable(): these three take (table, column) with no database.
+        if (in_array($driver, ['sqlite', 'oci', 'firebird'], true)) {
             $stmt->execute([$table, $column]);
         } else {
             $db = $this->config()['database'] ?? '';

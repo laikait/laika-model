@@ -66,6 +66,15 @@ final class Lexer
     /** Set while flushing, so a trailing quote is not held back forever. */
     private bool $finalPass = false;
 
+    /**
+     * Inside a `COPY ... FROM stdin` data block.
+     *
+     * The block does not end at the delimiter — it ends at a line holding only
+     * "\.", and the rows between are tab-separated text rather than SQL. So
+     * while this is set the scanner cuts on newlines instead.
+     */
+    private bool $copyMode = false;
+
     /** Raised by the context consumers when they cannot advance any further. */
     private bool $needMore = false;
 
@@ -139,6 +148,23 @@ final class Lexer
     private function next(): ?Statement
     {
         while (true) {
+            if ($this->copyMode) {
+                $row = $this->nextCopyRow();
+
+                if ($row !== null) {
+                    return $row;
+                }
+
+                // Still in the block means the buffer ran out mid-row; the
+                // reader has to feed more. Otherwise the terminator was found
+                // and normal SQL scanning resumes below.
+                if ($this->copyMode) {
+                    return null;
+                }
+
+                continue;
+            }
+
             // A DELIMITER directive is not SQL — it reconfigures the splitter.
             while ($this->consumeDelimiterDirective()) {
                 // Dumps often stack these around routine bodies.
@@ -154,12 +180,91 @@ final class Lexer
 
             // Empty (e.g. ";;") — keep going rather than reporting end-of-input.
             if ($statement !== null) {
+                // Everything after a COPY header is data until "\.", so the
+                // scanner has to change mode before it reads another byte.
+                if ($this->opensCopyBlock($statement)) {
+                    $this->copyMode = true;
+                }
+
                 return $statement;
             }
 
             if ($this->buffer === '') {
                 return null;
             }
+        }
+    }
+
+    /**
+     * Does this statement open a COPY data block?
+     *
+     * body() rather than the raw SQL, so pg_dump's "-- Data for Name: ..."
+     * banner does not have to be matched around.
+     */
+    private function opensCopyBlock(Statement $statement): bool
+    {
+        // COPY is PostgreSQL's; MySQL's bulk form is LOAD DATA and carries no
+        // inline block, so no other dialect should switch modes here.
+        if ($this->dialect !== 'pgsql') {
+            return false;
+        }
+
+        return (bool) preg_match('/^COPY\b.*\bFROM\s+STDIN\b/is', $statement->body());
+    }
+
+    /**
+     * Cut one line out of a COPY data block.
+     *
+     * A row per Statement rather than a block per Statement: a COPY block can
+     * be gigabytes, and buffering one whole would break the constant-memory
+     * promise that stream() and convertFile() make.
+     *
+     * @return ?Statement Null when the block ended or more input is needed —
+     *                    $copyMode tells the caller which.
+     */
+    private function nextCopyRow(): ?Statement
+    {
+        while (true) {
+            if ($this->buffer === '') {
+                // On the final pass there is no more input coming, so an
+                // unterminated block ends here rather than stalling.
+                if ($this->finalPass) {
+                    $this->copyMode = false;
+                }
+
+                return null;
+            }
+
+            // Captured before discard(), which advances it past this line.
+            $offset  = $this->statementOffset;
+            $newline = strpos($this->buffer, "\n");
+
+            if ($newline === false) {
+                if (!$this->finalPass) {
+                    return null;
+                }
+
+                // No trailing newline at end of input: the remainder is the
+                // last row.
+                $line = $this->buffer;
+                $this->discard(strlen($this->buffer));
+            } else {
+                $line = substr($this->buffer, 0, $newline);
+                $this->discard($newline + 1);
+            }
+
+            $line = rtrim($line, "\r");
+
+            if ($line === '\\.') {
+                $this->copyMode = false;
+                return null;
+            }
+
+            if ($line === '') {
+                continue;
+            }
+
+            return new Statement($line, ++$this->ordinal, $offset, Statement::KIND_COPY_DATA);
         }
     }
 

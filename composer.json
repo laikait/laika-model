@@ -3,6 +3,7 @@
     "description": "A PDO Multi-Connectoion Database Model",
     "type": "project",
     "license": "MIT",
+    "version": "3.2.5",
     "autoload": {
         "psr-4": {
             "Laika\\Model\\": "src/"

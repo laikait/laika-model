@@ -25,6 +25,42 @@ abstract class Grammar
     abstract public function compileColumnExists(): string;
     abstract public function compileRenameTable(string $from, string $to): string;
 
+    /** Convert a Column Definition Array to SQL Fragment */
+    public function columnToSql(array $col): string
+    {
+        $sql = $this->wrapColumn($col['name']) . ' ' . $this->resolveType($col);
+
+        if ($this->supportsUnsigned() && !empty($col['unsigned']) && !str_contains($sql, 'UNSIGNED')) {
+            $sql .= ' UNSIGNED';
+        }
+
+        $nullable = $this->nullableClause(!empty($col['nullable']));
+        $default  = array_key_exists('default', $col)
+            ? ' DEFAULT ' . $this->formatDefault($col['default'])
+            : '';
+
+        // Oracle and Firebird treat NOT NULL as an inline *constraint*, which
+        // their grammars require to come after the DEFAULT clause. The other
+        // four accept either order and conventionally write NOT NULL first, so
+        // their output is unchanged.
+        $sql .= $this->defaultBeforeNullable()
+            ? $default . $nullable
+            : $nullable . $default;
+
+        // autoIncrementKeyword() and columnComment() return '' on drivers that
+        // have no equivalent — appending unconditionally would leave a trailing
+        // space on every such column.
+        if (!empty($col['auto_increment']) && ($keyword = $this->autoIncrementKeyword()) !== '') {
+            $sql .= ' ' . $keyword;
+        }
+
+        if (!empty($col['comment']) && ($comment = $this->columnComment($col['comment'])) !== '') {
+            $sql .= ' ' . $comment;
+        }
+
+        return $sql;
+    }
+
     // -----------------------------------------------------------------------
     // Shared helpers
     // -----------------------------------------------------------------------
@@ -47,39 +83,6 @@ abstract class Grammar
     protected function supportsUnsigned(): bool
     {
         return false;
-    }
-
-    /** Convert a Column Definition Array to SQL Fragment */
-    protected function columnToSql(array $col): string
-    {
-        $sql = $this->wrapColumn($col['name']) . ' ' . $this->resolveType($col);
-
-        if ($this->supportsUnsigned() && !empty($col['unsigned']) && !str_contains($sql, 'UNSIGNED')) {
-            $sql .= ' UNSIGNED';
-        }
-
-        if (!empty($col['nullable'])) {
-            $sql .= ' NULL';
-        } else {
-            $sql .= ' NOT NULL';
-        }
-
-        if (array_key_exists('default', $col)) {
-            $sql .= ' DEFAULT ' . $this->formatDefault($col['default']);
-        }
-
-        // autoIncrementKeyword() and columnComment() return '' on drivers that
-        // have no equivalent — appending unconditionally would leave a trailing
-        // space on every such column.
-        if (!empty($col['auto_increment']) && ($keyword = $this->autoIncrementKeyword()) !== '') {
-            $sql .= ' ' . $keyword;
-        }
-
-        if (!empty($col['comment']) && ($comment = $this->columnComment($col['comment'])) !== '') {
-            $sql .= ' ' . $comment;
-        }
-
-        return $sql;
     }
 
     protected function resolveType(array $col): string
@@ -198,7 +201,56 @@ abstract class Grammar
      */
     protected function prefixName(string $prefix, string $base): string
     {
-        return str_starts_with($base, $prefix) ? $base : $prefix . $base;
+        return $this->fitName(str_starts_with($base, $prefix) ? $base : $prefix . $base);
+    }
+
+    /**
+     * How this engine spells column nullability.
+     *
+     * Firebird has no explicit NULL keyword — a column is nullable by saying
+     * nothing — so it overrides this to return an empty string.
+     */
+    protected function nullableClause(bool $nullable): string
+    {
+        return $nullable ? ' NULL' : ' NOT NULL';
+    }
+
+    /** Whether DEFAULT must precede the NOT NULL constraint. */
+    protected function defaultBeforeNullable(): bool
+    {
+        return false;
+    }
+
+    /**
+     * Longest identifier this engine accepts, or null for no practical limit.
+     *
+     * Firebird 3 stops at 31 characters and Oracle at 30 before 12.2, which the
+     * generated names here overrun easily — qualifyWithTable() alone turns
+     * `userid` into `tblemails_userid` before the `fk_` prefix goes on.
+     */
+    protected function maxIdentifierLength(): ?int
+    {
+        return null;
+    }
+
+    /**
+     * Shorten a generated name to fit maxIdentifierLength().
+     *
+     * The tail is replaced with a hash of the full name rather than simply cut,
+     * because two constraints on the same table routinely share a long prefix —
+     * truncating alone would collide them and the second CREATE would fail.
+     */
+    protected function fitName(string $name): string
+    {
+        $limit = $this->maxIdentifierLength();
+
+        if ($limit === null || strlen($name) <= $limit) {
+            return $name;
+        }
+
+        $digest = substr(md5($name), 0, 6);
+
+        return substr($name, 0, $limit - 7) . '_' . $digest;
     }
 
     /**

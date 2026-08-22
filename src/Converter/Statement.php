@@ -33,15 +33,40 @@ final class Statement
     /** CREATE DATABASE / USE / ALTER DATABASE — scoped outside the connection. */
     public const KIND_DATABASE     = 'database';
 
+    /**
+     * CREATE / ALTER / DROP SEQUENCE — PostgreSQL's identity plumbing.
+     *
+     * The sequence object itself does not port: MySQL and SQLite have no such
+     * thing. What it *means* is recovered from the accompanying
+     * "ALTER TABLE ... SET DEFAULT nextval(...)", which becomes the target's
+     * own auto-increment.
+     */
+    public const KIND_SEQUENCE     = 'sequence';
+
+    /** The `COPY t (cols) FROM stdin;` header that opens a bulk data block. */
+    public const KIND_COPY         = 'copy';
+
+    /**
+     * One tab-separated row from inside a COPY block.
+     *
+     * These carry no SQL keywords at all, so they can never classify
+     * themselves — the lexer tags them, which is what the $kind constructor
+     * argument is for.
+     */
+    public const KIND_COPY_DATA    = 'copy_data';
+
     public const KIND_OTHER        = 'other';
 
-    private ?string $kind = null;
+    private ?string $kind;
 
     public function __construct(
         public readonly string $sql,
         public readonly int $ordinal,
         public readonly int $offset,
-    ) {}
+        ?string $kind = null,
+    ) {
+        $this->kind = $kind;
+    }
 
     public function __toString(): string
     {
@@ -86,6 +111,23 @@ final class Statement
                 continue;
             }
 
+            // psql meta-commands are client instructions, not SQL, and end at
+            // the newline rather than the delimiter — so the splitter hands
+            // them over glued to whatever statement follows. pg_dump 18 opens
+            // every dump with "\restrict <token>" and closes with
+            // "\unrestrict <token>"; pg_dumpall adds "\connect".
+            //
+            // Stripping only the leading run leaves any real SQL behind it
+            // intact, so it still classifies and parses normally.
+            if (str_starts_with($trimmed, '\\')) {
+                $newline = strpos($trimmed, "\n");
+                if ($newline === false) {
+                    return '';
+                }
+                $sql = substr($trimmed, $newline + 1);
+                continue;
+            }
+
             return $trimmed;
         }
     }
@@ -105,12 +147,25 @@ final class Statement
             // Checked before CREATE TABLE so "CREATE DATABASE" is not misread.
             (bool) preg_match('/^(USE|CREATE\s+(DATABASE|SCHEMA)|ALTER\s+(DATABASE|SCHEMA)|DROP\s+(DATABASE|SCHEMA))\b/', $head) => self::KIND_DATABASE,
 
+            // Before the TABLE arms so the intent reads in dump order, though
+            // the prefixes do not actually overlap.
+            (bool) preg_match('/^(CREATE|ALTER|DROP)\s+SEQUENCE\b/', $head)       => self::KIND_SEQUENCE,
+
             (bool) preg_match('/^CREATE\s+(TEMPORARY\s+)?TABLE\b/', $head)        => self::KIND_CREATE_TABLE,
             (bool) preg_match('/^CREATE\s+(UNIQUE\s+)?INDEX\b/', $head)           => self::KIND_CREATE_INDEX,
             (bool) preg_match('/^INSERT\b|^REPLACE\b/', $head)                    => self::KIND_INSERT,
+            (bool) preg_match('/^COPY\b.*\bFROM\s+STDIN\b/', $head)               => self::KIND_COPY,
             (bool) preg_match('/^ALTER\s+TABLE\b/', $head)                        => self::KIND_ALTER_TABLE,
             (bool) preg_match('/^DROP\s+TABLE\b/', $head)                         => self::KIND_DROP_TABLE,
-            (bool) preg_match('/^SET\b/', $head)                                  => self::KIND_SET,
+            // PRAGMA is SQLite's session-setup statement and leads every
+            // `sqlite3 .dump`. It is grouped with SET because both are dropped:
+            // no other engine understands it.
+            //
+            // pg_dump's SELECT pg_catalog.set_config()/setval() calls are the
+            // same thing wearing a SELECT: session setup and sequence
+            // positioning. Matched on the qualified prefix only — a bare
+            // ^SELECT arm would swallow real queries.
+            (bool) preg_match('/^(SET|PRAGMA)\b|^SELECT\s+PG_CATALOG\./', $head)  => self::KIND_SET,
             (bool) preg_match('/^(START\s+TRANSACTION|BEGIN|COMMIT|ROLLBACK)\b/', $head) => self::KIND_TRANSACTION,
 
             // mysqldump wraps every table in LOCK/UNLOCK. Bare CHECK is left out

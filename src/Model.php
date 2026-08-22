@@ -13,6 +13,7 @@ declare(strict_types=1);
 namespace Laika\Model;
 
 use Laika\Model\Exceptions\ModelException;
+use Laika\Model\Schema\Expression;
 
 class Model
 {
@@ -52,6 +53,14 @@ class Model
     /** @var array $having Having Clauses */
     protected array $having = [];
 
+    /**
+     * @var array HAVING bindings, kept apart from $bindings.
+     *
+     * build() emits HAVING after WHERE, so mixing the two lists desynchronised
+     * the placeholders whenever having() was called before where().
+     */
+    protected array $havingBindings = [];
+
     /** @var string $connection Database Connection Name */
     protected string $connection = 'default';
 
@@ -64,8 +73,23 @@ class Model
     /** @var string $uid UID Column Name */
     protected string $uid = 'uid';
 
-    /** @var bool $softDelete */
+    /** @var bool $softDelete Whether this model soft-deletes and hides trashed rows. */
     protected bool $softDelete = false;
+
+    /**
+     * @var bool The value $softDelete was declared with.
+     *
+     * $softDelete doubles as per-chain state (soft()), so reset() has to put
+     * back what the subclass declared rather than a hardcoded false — otherwise
+     * a soft-delete model starts hard-deleting on its second query.
+     */
+    private bool $softDeleteDefault = false;
+
+    /** @var bool Include soft-deleted rows in reads (withTrash()). */
+    protected bool $withTrashed = false;
+
+    /** @var bool Return only soft-deleted rows (onlyTrashed()). */
+    protected bool $onlyTrashed = false;
 
     /** @var string $deletedAtColumn */
     protected string $deletedAtColumn = 'deleted_at';
@@ -92,6 +116,9 @@ class Model
 
         // Init DB for Connection
         // if (class_exists("\\Laika\\Service\\Init")) \Laika\Service\Init::db($this->connection);
+
+        // Remember what the subclass declared so reset() can restore it.
+        $this->softDeleteDefault = $this->softDelete;
 
         $this->refreshConnection();
     }
@@ -143,7 +170,8 @@ class Model
      */
     public function table(string $table): Static
     {
-        $this->reset();
+        // Deliberately does not reset(): calling table() mid-chain used to
+        // discard the select and wheres already set, silently.
         $this->table = $table;
         return $this;
     }
@@ -153,31 +181,55 @@ class Model
      * @param array|string|null $columns Column names. Default is null
      * @return Static
      */
-    public function select(array|string|null $columns = null): Static
+    public function select(array|string|Expression|null $columns = null): Static
     {
-        if (empty($columns)) {
+        if ($columns === null || $columns === '' || $columns === []) {
             $this->columns = '*';
             return $this;
-        } elseif (is_array($columns)) {
-            $columns = implode(', ', $columns);
         }
-        // Split on commas that are NOT inside parentheses (e.g. CONCAT(a, b))
-        $array = preg_split('/,(?![^(]*\))/', $columns);
-        // Trim & Quote Columns
-        $trimed = array_map(function($v) {
-            $v = trim($v);
-            // Handle AS alias: "expr AS alias" or "expr as alias"
-            if (preg_match('/^(.+?)\s+[Aa][Ss]\s+(\S+)$/', $v, $m)) {
-                $expr  = trim($m[1]);
-                $alias = trim($m[2]);
-                // Expression (contains parentheses) — pass through, only sanitize alias
-                $left = str_contains($expr, '(') ? $expr : $this->sanitize($expr);
-                return $left . ' AS ' . $this->sanitize($alias);
+
+        // A plain string may be a comma-separated list — "id, name, email".
+        // Splitting is safe here because every part is sanitised below; the old
+        // code split too, but then passed anything containing "(" through raw.
+        $list = match (true) {
+            is_array($columns)              => $columns,
+            $columns instanceof Expression  => [$columns],
+            default                         => explode(',', $columns),
+        };
+
+        $parts = array_map(function (mixed $col): string {
+            // Raw SQL is opt-in and explicit. Anything else is an identifier.
+            if ($col instanceof Expression) {
+                return (string) $col;
             }
-            // Plain expression without alias — pass through if it contains parentheses
-            return str_contains($v, '(') ? $v : $this->sanitize($v);
-        }, $array);
-        $this->columns = implode(', ', $trimed);
+
+            if (!is_string($col)) {
+                throw new ModelException('Select columns must be strings or Expression instances.');
+            }
+
+            $col = trim($col);
+
+            // "expr AS alias" — both halves are identifiers here; use an
+            // Expression for the left side when it needs to be a function call.
+            if (preg_match('/^(.+?)\s+AS\s+(\S+)$/i', $col, $m)) {
+                return $this->sanitize(trim($m[1])) . ' AS ' . $this->sanitize(trim($m[2]));
+            }
+
+            // "*" and "users.*" are wildcards, not identifiers.
+            if ($col === '*') {
+                return '*';
+            }
+
+            if (str_ends_with($col, '.*')) {
+                return $this->sanitize(substr($col, 0, -2)) . '.*';
+            }
+
+            return $this->sanitize($col);
+        }, $list);
+
+        $parts = array_values(array_filter($parts, static fn (string $c): bool => $c !== ''));
+
+        $this->columns = $parts === [] ? '*' : implode(', ', $parts);
         return $this;
     }
 
@@ -204,7 +256,7 @@ class Model
     {
         $allowedOps = ['=', '!=', '<>', '<', '>', '<=', '>='];
         if (!in_array(trim($operator), $allowedOps, true)) {
-            throw new \InvalidArgumentException("Invalid join operator [{$operator}].");
+            throw new ModelException("Invalid join operator [{$operator}].");
         }
 
         $type = strtoupper($type);
@@ -214,7 +266,7 @@ class Model
         $second = $this->sanitize($second);
 
         if (!in_array($type, ['LEFT', 'RIGHT', 'INNER'])) {
-            throw new \InvalidArgumentException("Invalid join type: {$type}");
+            throw new ModelException("Invalid join type: {$type}");
         }
 
         $this->joins[] = "{$type} JOIN {$table} ON {$first} {$operator} {$second}";
@@ -232,14 +284,32 @@ class Model
     {
         $allowed = ['=', '!=', '<>', '<', '>', '<=', '>=', 'LIKE', 'NOT LIKE'];
         if (!in_array(strtoupper(trim($operator)), $allowed, true)) {
-            throw new \InvalidArgumentException("Invalid operator [{$operator}].");
+            throw new ModelException("Invalid operator [{$operator}].");
         }
 
-        foreach ($where as $col => $val) {
-            // Quote String
-            $col = $this->sanitize($col);
-            $this->addWhere("{$col} {$operator} ?", [$val], $compare);
+        if (empty($where)) {
+            return $this;
         }
+
+        $operator = strtoupper(trim($operator));
+
+        $parts    = [];
+        $bindings = [];
+
+        foreach ($where as $col => $val) {
+            $parts[]    = $this->sanitize((string) $col) . " {$operator} ?";
+            $bindings[] = $val;
+        }
+
+        // One where() call is one group: the columns inside it are joined by
+        // $compare, and the group as a whole attaches to the chain with the same
+        // $compare. Without the parentheses a multi-column OR leaked into the
+        // surrounding chain and SQL's AND-binds-tighter rule silently returned
+        // the wrong rows.
+        $glue      = strtoupper(trim($compare)) === 'OR' ? ' OR ' : ' AND ';
+        $condition = count($parts) === 1 ? $parts[0] : '(' . implode($glue, $parts) . ')';
+
+        $this->addWhere($condition, $bindings, $compare);
         return $this;
     }
 
@@ -382,14 +452,14 @@ class Model
     {
         $allowed = ['=', '!=', '<>', '<', '>', '<=', '>=', 'LIKE', 'NOT LIKE'];
         if (!in_array(strtoupper(trim($operator)), $allowed, true)) {
-            throw new \InvalidArgumentException("Invalid operator [{$operator}].");
+            throw new ModelException("Invalid operator [{$operator}].");
         }
 
         // Quote String
         $column = $this->sanitize($column);
 
-        $this->having[]     =   "{$column} {$operator} ?";
-        $this->bindings[]   =   $value;
+        $this->having[]         = "{$column} " . strtoupper(trim($operator)) . " ?";
+        $this->havingBindings[] = $value;
         return $this;
     }
 
@@ -405,7 +475,7 @@ class Model
         $direction = strtoupper($direction);
         // Check Direction
         if (!in_array($direction, ['ASC', 'DESC'])) {
-            throw new \InvalidArgumentException("Invalid order direction: {$direction}");
+            throw new ModelException("Invalid order direction: {$direction}");
         }
         // Quote String
         $column = $this->sanitize($column);
@@ -429,18 +499,6 @@ class Model
      * Offset Clause
      * @param int|string $page Page Number. Default is Page Number 1
      * @return Static
-     * @deprecated
-     */
-    public function offset(int|string $page = 1): Static
-    {
-        $this->page = max(1, (int) $page);
-        return $this;
-    }
-
-    /**
-     * Offset Clause
-     * @param int|string $page Page Number. Default is Page Number 1
-     * @return Static
      */
     public function page(int|string $page = 1): Static
     {
@@ -449,22 +507,40 @@ class Model
     }
 
     /**
-     * Get With Trashed Rows
+     * Include soft-deleted rows in the result.
+     *
+     * NOTE: this used to return *only* trashed rows, the opposite of the name.
+     * onlyTrashed() is that behaviour.
+     *
      * @return Static
      */
     public function withTrash(): Static
     {
-        $this->notNull($this->deletedAtColumn);
+        $this->withTrashed = true;
+        $this->onlyTrashed = false;
         return $this;
     }
 
     /**
-     * Get Without Trashed Rows
+     * Return only soft-deleted rows.
+     * @return Static
+     */
+    public function onlyTrashed(): Static
+    {
+        $this->onlyTrashed = true;
+        $this->withTrashed = false;
+        return $this;
+    }
+
+    /**
+     * Exclude soft-deleted rows. This is already the default on a soft-delete
+     * model; it is here for models that opt in per chain with soft().
      * @return Static
      */
     public function withoutTrash(): Static
     {
-        $this->isNull($this->deletedAtColumn);
+        $this->withTrashed = false;
+        $this->onlyTrashed = false;
         return $this;
     }
 
@@ -481,88 +557,155 @@ class Model
 
     /**
      * Get Result
-     * @return array{} Returns the results as an array
+     *
+     * Rows come back as arrays or stdClass depending on the connection's
+     * PDO::ATTR_DEFAULT_FETCH_MODE; both are supported.
+     *
+     * @return array<int,array|object>
      */
     public function get(): array
     {
         $sql = $this->build();
-        // Add Queries to Log
         Log::add($sql, $this->connection);
 
-        // Execute Query
-        $stmt = $this->pdo()->prepare($sql);
-        $stmt->execute($this->bindings);
+        try {
+            $stmt = $this->run($sql, $this->bindings);
 
-        // Fetch Rows
-        $rows = $stmt->fetchAll();
-        // Type Cast
-        foreach ($rows as $k => $row) {
-            $rows[$k] = $this->cast($row);
+            $rows = $stmt->fetchAll();
+
+            foreach ($rows as $k => $row) {
+                $rows[$k] = $this->cast($row);
+            }
+
+            return $rows;
+        } finally {
+            // Without this, any failure above left the wheres and bindings
+            // attached to the instance and they leaked into the next query.
+            $this->reset();
         }
-        $this->reset();
-        return $rows;
+    }
+
+    /**
+     * Stream the result one row at a time.
+     *
+     * Use this instead of get() for result sets too large to materialise. The
+     * finally runs on GeneratorExit too, so abandoning the loop early still
+     * resets the builder.
+     *
+     * @return \Generator<int,array|object>
+     */
+    public function cursor(): \Generator
+    {
+        $sql = $this->build();
+        Log::add($sql, $this->connection);
+
+        $bindings = $this->bindings;
+        $stmt     = null;
+
+        try {
+            $stmt = $this->run($sql, $bindings);
+
+            while (($row = $stmt->fetch()) !== false) {
+                yield $this->cast($row);
+            }
+        } finally {
+            $stmt?->closeCursor();
+            $this->reset();
+        }
     }
 
     /**
      * Get First Result
-     * @return array Returns the first result as an array
+     * @return array|object|null The row, or null when nothing matched.
      */
-    public function first(): array
+    public function first(): array|object|null
     {
-        // Check Where Clause Exists
         if (empty($this->wheres)) {
-            throw new \InvalidArgumentException("WHERE Clause Required For Single Data.");
+            throw new ModelException("WHERE Clause Required For Single Data.");
         }
 
         $this->limit(1);
         $result = $this->get();
-        return $result[0] ?? [];
+
+        return $result[0] ?? null;
     }
 
     /**
      * Find By ID / UID
-     * @param int $id ID / UID
-     * @return array Returns the result as an array
+     * @param int|string $id ID / UID
+     * @return array|object|null The row, or null when nothing matched.
      */
-    public function find(int|string $id): array
+    public function find(int|string $id): array|object|null
     {
-        return is_numeric($id) ?
-                            $this->where([$this->id => (int) $id])->first() :
-                            $this->where([$this->uid => (string) $id])->first();
+        return is_numeric($id)
+            ? $this->where([$this->id => (int) $id])->first()
+            : $this->where([$this->uid => (string) $id])->first();
     }
 
     /**
-     * Count Column
+     * Count Rows
+     *
+     * COUNT is built independently of select() — deriving it from $columns made
+     * count() a syntax error after select([...]) or distinct().
+     *
      * @return int
      */
     public function count(): int
     {
-        $this->columns = "COUNT({$this->columns}) as count";
-        $sql = $this->build();
+        $distinct = str_starts_with($this->columns, 'DISTINCT ');
 
-        // Add Queries to Log
+        if ($distinct) {
+            $expr = trim(substr($this->columns, strlen('DISTINCT ')));
+            $this->columns = $expr === '*' ? 'COUNT(*)' : "COUNT(DISTINCT {$expr})";
+        } else {
+            $this->columns = 'COUNT(*)';
+        }
+
+        $this->columns .= ' AS ' . $this->sanitize('aggregate');
+
+        // An aggregate over a page is not a count of the table.
+        $this->limit = null;
+        $this->page  = null;
+
+        $sql = $this->build();
         Log::add($sql, $this->connection);
 
-        // Execute Query
-        $stmt = $this->pdo()->prepare($sql);
-        $stmt->execute($this->bindings);
-        $result = $stmt->fetch();
+        try {
+            $stmt   = $this->run($sql, $this->bindings);
+            $result = $stmt->fetch();
 
-        // Reset Query Builder
-        $this->reset();
-        return (int) ($result['count'] ?? 0);
+            if ($result === false) {
+                return 0;
+            }
+
+            return (int) $this->rowGet($result, 'aggregate');
+        } finally {
+            $this->reset();
+        }
     }
-
 
     /**
      * Get Single Column Values as Array
+     *
+     * The result key is the alias or the bare column, never the qualified name,
+     * so pluck('users.email') reads back as 'email'.
+     *
      * @param string $column Column Name
      * @return array
      */
     public function pluck(string $column): array
     {
-        $results = $this->select($column)->get();
-        return array_column($results, $column);
+        $key = $column;
+
+        if (preg_match('/\s+AS\s+(\S+)$/i', $column, $m)) {
+            $key = $m[1];
+        } elseif (str_contains($column, '.')) {
+            $key = substr($column, strrpos($column, '.') + 1);
+        }
+
+        $rows = $this->select($column)->get();
+
+        return array_map(fn (array|object $row): mixed => $this->rowGet($row, $key), $rows);
     }
 
     /**
@@ -575,15 +718,22 @@ class Model
 
     /**
      * First Or Create
+     *
+     * NOTE: this is three statements without a transaction, so two concurrent
+     * callers can both miss and both insert. Wrap it in transaction() when that
+     * matters.
+     *
      * @param array $where Columns to search for existing record
      * @param array $data Additional data to insert if not found
-     * @return array Found or newly created record
+     * @return array|object|null Found or newly created record
      */
-    public function firstOrCreate(array $where, array $data = []): array
+    public function firstOrCreate(array $where, array $data = []): array|object|null
     {
         $row = $this->where($where)->first();
 
-        if (!empty($row)) return $row;
+        if ($row !== null) {
+            return $row;
+        }
 
         $this->insert(array_merge($where, $data));
 
@@ -592,20 +742,17 @@ class Model
 
     /**
      * Get First or Fail
-     * @throws \RuntimeException Throws an exception if no records are found
-     * @return array
+     * @throws ModelException When no record matches.
+     * @return array|object
      */
-    public function firstOrFail(): array
+    public function firstOrFail(): array|object
     {
-        try {
-            $row = $this->first();
-        } catch (\InvalidArgumentException $e) {
-            throw new \RuntimeException($e->getMessage(), (int) $e->getCode(), $e);
+        $row = $this->first();
+
+        if ($row === null) {
+            throw new ModelException("No Records Found");
         }
 
-        if (empty($row)) {
-            throw new \RuntimeException("No Records Found");
-        }
         return $row;
     }
 
@@ -618,22 +765,35 @@ class Model
      * sequence/generator itself.
      *
      * @param array{} $data Insert Row('s) Data. Example: ['name' => 'John', 'age' => 30] or [0 => ['name' => 'John'], ['name' => 'Doe']]
-     * @throws \InvalidArgumentException|\RuntimeException
+     * @throws ModelException|\PDOException
      * @return string|false Returns the last inserted ID
      */
     public function insert(array $data): string|false
     {
         if (empty($data)) {
-            throw new \InvalidArgumentException('Cannot Insert Empty Rows.');
+            throw new ModelException('Cannot Insert Empty Rows.');
         }
 
-        // Normalize input: detect single row vs multiple rows
-        $isMultiple = isset($data[0]) && is_array($data[0]);
+        // Normalize input: detect single row vs multiple rows. array_is_list()
+        // rather than isset($data[0]) — rows out of array_filter() are keyed
+        // 1,2,3 and used to be misread as a single row.
+        $isMultiple = array_is_list($data) && isset($data[0]) && is_array($data[0]);
 
-        $rows = $isMultiple ? $data : [$data];
+        $rows = $isMultiple ? array_values($data) : [$data];
 
         // Extract columns from first row
         $keys = array_keys($rows[0]);
+
+        // Validate every row before executing anything. This used to happen
+        // inside the chunk loop, so a bad row at index 1500 left the first
+        // chunk already committed.
+        foreach ($rows as $i => $row) {
+            if (array_keys($row) !== $keys) {
+                throw new ModelException(
+                    "All Insert Rows Must Have Identical Columns (row {$i} differs)."
+                );
+            }
+        }
 
         // Quote columns
         $columns = array_map(function ($column) {
@@ -652,8 +812,18 @@ class Model
         $stmt        = null;
         $preparedSql = null;
 
-        // Chunk rows into max 1000 per query
-        foreach (array_chunk($rows, $rowsPerStatement) as $chunk) {
+        $chunks = array_chunk($rows, $rowsPerStatement);
+
+        // More than one statement means a partial insert is possible, so the
+        // batch runs inside a transaction.
+        $wrap = count($chunks) > 1;
+
+        if ($wrap) {
+            Connection::beginTransaction($this->connection);
+        }
+
+        try {
+        foreach ($chunks as $chunk) {
 
             // Build placeholders for this chunk
             $rowPlaceholders = '(' . implode(', ', array_fill(0, count($columns), '?')) . ')';
@@ -668,76 +838,124 @@ class Model
             // Flatten bindings
             $bindings = [];
             foreach ($chunk as $row) {
-                // Ensure row structure consistency
-                if (array_keys($row) !== $keys) {
-                    throw new \InvalidArgumentException('All Insert Rows Must Have Identical Columns.');
-                }
                 $bindings = array_merge($bindings, array_values($row));
             }
 
             // Execute. Every full chunk produces identical SQL, so the handle is
             // reused rather than re-prepared — this matters most on oci/firebird,
-            // where the chunk is a single row.
-            try {
-                if ($sql !== $preparedSql) {
-                    $stmt        = $this->pdo()->prepare($sql);
-                    $preparedSql = $sql;
-                }
-                $stmt->execute($bindings);
-            } catch (\Throwable $th) {
-                throw new \RuntimeException($th->getMessage(), (int) $th->getCode(), $th);
+            // where the chunk is a single row. The PDOException is left intact:
+            // wrapping it discarded errorInfo and the SQLSTATE, so callers could
+            // not tell a duplicate key from a dead connection.
+            if ($sql !== $preparedSql) {
+                $stmt        = $this->pdo()->prepare($sql);
+                $preparedSql = $sql;
             }
+
+            $stmt->execute($bindings);
         }
 
-        // Reset builder state
-        $this->reset();
+            if ($wrap) {
+                Connection::commit($this->connection);
+            }
+        } catch (\Throwable $e) {
+            if ($wrap) {
+                try {
+                    Connection::rollBack($this->connection);
+                } catch (\Throwable) {
+                    // The original failure is the one worth reporting.
+                }
+            }
+
+            throw $e;
+        } finally {
+            $this->reset();
+        }
 
         // PDO_OCI and PDO_Firebird require the sequence/generator name here and
-        // return '' or throw without one. Don't pretend to have an id.
+        // return '' or throw without one. PostgreSQL throws for the same reason
+        // unless the table has a sequence it can infer. Don't pretend to have
+        // an id, and never turn a successful write into an exception.
         if (in_array($driver, ['oci', 'firebird'], true)) {
             return '';
         }
 
-        return $this->pdo()->lastInsertId();
+        try {
+            return $this->pdo()->lastInsertId();
+        } catch (\PDOException) {
+            return '';
+        }
     }
 
     /**
      * Chunk the Results
+     *
+     * Pages with LIMIT/OFFSET, which is O(n^2) on large tables and can skip or
+     * repeat rows if the callback mutates the set. Prefer cursor() unless you
+     * specifically need batches.
+     *
      * @param int $size Chunk Size. Example: 100
-     * @param callable $callback Callback function. Argument is an array of results. Example: function(array $rows) { ... }
+     * @param callable $callback Receives each batch. Return false to stop.
      * @return void
      */
     public function chunk(int $size, callable $callback): void
     {
         $size = max(1, $size);
 
-        $page = 1;
+        // A caller's limit() is a cap on the total, not per batch.
+        $remaining = $this->limit;
 
-        while (true) {
-            $this->limit = $size;
-            $this->page  = $page; // use page instead of offset directly
+        $wheres   = $this->wheres;
+        $bindings = $this->bindings;
+        $havingB  = $this->havingBindings;
+        $page     = 1;
 
-            $sql = $this->build();
+        try {
+            while (true) {
+                $take = $remaining === null ? $size : min($size, $remaining);
 
-            // Add Queries to Log
-            Log::add($sql, $this->connection);
+                if ($take <= 0) {
+                    break;
+                }
 
-            $stmt = $this->pdo()->prepare($sql);
-            $stmt->execute($this->bindings);
+                // build() consumes the where state, so restore it each round.
+                $this->wheres         = $wheres;
+                $this->bindings       = $bindings;
+                $this->havingBindings = $havingB;
+                $this->limit          = $take;
+                $this->page           = $page;
 
-            $rows = $stmt->fetchAll();
+                $sql = $this->build();
+                Log::add($sql, $this->connection);
 
-            if (empty($rows)) {
-                $this->reset();
-                break;
+                $stmt = $this->run($sql, $this->bindings);
+
+                $rows = $stmt->fetchAll();
+                $stmt->closeCursor();
+
+                if (empty($rows)) {
+                    break;
+                }
+
+                foreach ($rows as $k => $row) {
+                    $rows[$k] = $this->cast($row);
+                }
+
+                if ($callback($rows) === false) {
+                    break;
+                }
+
+                if ($remaining !== null) {
+                    $remaining -= count($rows);
+                }
+
+                if (count($rows) < $take) {
+                    break;
+                }
+
+                $page++;
             }
-
-            foreach ($rows as $k => $row) {
-                $rows[$k] = $this->cast($row);
-            }
-
-            $callback($rows);
-            $page++;
+        } finally {
+            $this->reset();
         }
     }
 
@@ -751,12 +969,12 @@ class Model
     {
         // Check Where Clause Exists
         if (empty($this->wheres)) {
-            throw new \InvalidArgumentException("No WHERE Clause Provided for UPDATE operation.");
+            throw new ModelException("No WHERE Clause Provided for UPDATE operation.");
         }
 
         // Check Data Is Not Empty
         if (empty($data)) {
-            throw new \InvalidArgumentException("'\$data' Parameter Should Not Be Empty!");
+            throw new ModelException("'\$data' Parameter Should Not Be Empty!");
         }
 
         $set = [];
@@ -768,12 +986,15 @@ class Model
         // Sanitize Table
         $tbl = $this->sanitize($this->table);
 
-        // Make SQL
-        $sql = "UPDATE {$tbl} SET " . implode(', ', $set);
+        // Make SQL. The join goes before SET — appending it after produced
+        // "UPDATE t SET a = ? LEFT JOIN ...", a syntax error on every driver.
+        $sql = "UPDATE {$tbl}";
 
         if (!empty($this->joins)) {
             $sql .= " " . implode(' ', $this->joins);
         }
+
+        $sql .= " SET " . implode(', ', $set);
 
         if (!empty($this->wheres)) {
             $sql .= " WHERE " . implode(' ', $this->wheres);
@@ -782,14 +1003,13 @@ class Model
         // Add Queries to Log
         Log::add($sql, $this->connection);
 
-        // Execute Query
-        $stmt = $this->pdo()->prepare($sql);
-        $stmt->execute(array_merge(array_values($data), $this->bindings));
+        try {
+            $stmt = $this->run($sql, array_merge(array_values($data), $this->bindings));
 
-        // Get Affected Rows
-        $rowcount = $stmt->rowCount();
-        $this->reset();
-        return $rowcount;
+            return $stmt->rowCount();
+        } finally {
+            $this->reset();
+        }
     }
 
     /**
@@ -801,7 +1021,7 @@ class Model
     {
         // Check Where Clause Exists
         if (empty($this->wheres)) {
-            throw new \InvalidArgumentException("No WHERE Clause provided for DELETE operation.");
+            throw new ModelException("No WHERE Clause provided for DELETE operation.");
         }
 
         if ($this->softDelete) {
@@ -818,15 +1038,14 @@ class Model
 
         // Add Queries to Log
         Log::add($sql, $this->connection);
-    
-        // Execute Query
-        $stmt = $this->pdo()->prepare($sql);
-        $stmt->execute($this->bindings);
 
-        // Get Affected Rows
-        $rowcount = $stmt->rowCount();
-        $this->reset();
-        return $rowcount;
+        try {
+            $stmt = $this->run($sql, $this->bindings);
+
+            return $stmt->rowCount();
+        } finally {
+            $this->reset();
+        }
     }
 
     /**
@@ -837,43 +1056,7 @@ class Model
      */
     public function increment(string $column, int $number = 1): int
     {
-        // Validate Column
-        if (!preg_match('/^[a-z\._]+$/i', $column)) {
-            throw new ModelException("Invalid Column [{$column}]");
-        }
-
-        if (str_contains($column, '.')) {
-            [$tblName, $colName] = explode('.', $column, 2);
-            $tbl = $this->sanitize($tblName);
-            $col = $this->sanitize($colName);
-        } else {
-            $colName = $column;
-            $tbl     = $this->sanitize($this->table);
-            $col     = $this->sanitize($column);
-        }
-
-        if ($colName === $this->id) {
-            throw new ModelException("Not Possible To Increment Primary Key!");
-        }
-
-        // Check Where Clause Exists
-        if (empty($this->wheres)) {
-            throw new \InvalidArgumentException("No WHERE Clause Provided For Increment Operation.");
-        }
-
-        $where = "WHERE " . implode(' ', $this->wheres);
-        $sql = "UPDATE {$tbl} SET {$col} = {$col} + ? {$where}";
-
-        // Add Queries to Log
-        Log::add($sql, $this->connection);
-    
-        // Execute Query
-        $stmt = $this->pdo()->prepare($sql);
-        $stmt->execute(array_merge([$number], $this->bindings));
-
-        // Reset Query Builder
-        $this->reset();
-        return $stmt->rowCount();
+        return $this->step($column, $number, '+', 'Increment');
     }
 
     /**
@@ -884,11 +1067,18 @@ class Model
      */
     public function decrement(string $column, int $number = 1): int
     {
-        // Validate Column
-        if (!preg_match('/^[a-z\._]+$/i', $column)) {
-            throw new ModelException("Invalid Column [{$column}]");
-        }
+        return $this->step($column, $number, '-', 'Decrement');
+    }
 
+    /**
+     * Shared body for increment()/decrement().
+     *
+     * Identifier validation goes through sanitize() like everywhere else. The
+     * old private regex /^[a-z._]+$/i rejected any column with a digit, so
+     * views2 and q1_total were unusable.
+     */
+    private function step(string $column, int $number, string $sign, string $label): int
+    {
         if (str_contains($column, '.')) {
             [$tblName, $colName] = explode('.', $column, 2);
             $tbl = $this->sanitize($tblName);
@@ -900,27 +1090,25 @@ class Model
         }
 
         if ($colName === $this->id) {
-            throw new ModelException("Not Possible To Increment Primary Key!");
+            throw new ModelException("Not Possible To {$label} Primary Key!");
         }
 
-        // Check Where Clause Exists
         if (empty($this->wheres)) {
-            throw new \InvalidArgumentException("No WHERE Clause Provided For Decrement Operation.");
+            throw new ModelException("No WHERE Clause Provided For {$label} Operation.");
         }
 
         $where = "WHERE " . implode(' ', $this->wheres);
-        $sql = "UPDATE {$tbl} SET {$col} = {$col} - ? {$where}";
+        $sql   = "UPDATE {$tbl} SET {$col} = {$col} {$sign} ? {$where}";
 
-        // Add Queries to Log
         Log::add($sql, $this->connection);
-    
-        // Execute Query
-        $stmt = $this->pdo()->prepare($sql);
-        $stmt->execute(array_merge([$number], $this->bindings));
 
-        // Reset Query Builder
-        $this->reset();
-        return $stmt->rowCount();
+        try {
+            $stmt = $this->run($sql, array_merge([$number], $this->bindings));
+
+            return $stmt->rowCount();
+        } finally {
+            $this->reset();
+        }
     }
 
     /**
@@ -932,7 +1120,7 @@ class Model
     {
         // Check Where Clause Exists
         if (empty($this->wheres)) {
-            throw new \InvalidArgumentException("No WHERE Clause provided for Restore operation.");
+            throw new ModelException("No WHERE Clause provided for Restore operation.");
         }
 
         return $this->update([$this->deletedAtColumn => null]);
@@ -946,12 +1134,18 @@ class Model
      */
     public function execute(string $sql, ?array $bindings = null): \PDOStatement
     {
-        // Add Queries to Log
         Log::add($sql, $this->connection);
-        
-        $stmt = $this->pdo()->prepare($sql);
-        $stmt->execute($bindings);
-        return $stmt;
+
+        try {
+            $stmt = $this->pdo()->prepare($sql);
+            $stmt->execute($bindings);
+
+            return $stmt;
+        } finally {
+            // This bypasses the builder entirely; anything already chained is
+            // discarded rather than left dangling on the instance.
+            $this->reset();
+        }
     }
 
     /**
@@ -960,19 +1154,46 @@ class Model
      */
     public function debug(): string
     {
-        $sql = $this->build();
-        $bindings = $this->bindings;
+        // build() mutates: it folds the HAVING bindings into $bindings and adds
+        // the soft-delete predicate. Since debug() no longer resets, that state
+        // has to be put back or a following get() would apply both twice.
+        $snapshot = [
+            $this->wheres,
+            $this->bindings,
+            $this->havingBindings,
+            $this->columns,
+            $this->limit,
+            $this->page,
+        ];
+
+        try {
+            $sql      = $this->build();
+            $bindings = $this->bindings;
+        } finally {
+            [
+                $this->wheres,
+                $this->bindings,
+                $this->havingBindings,
+                $this->columns,
+                $this->limit,
+                $this->page,
+            ] = $snapshot;
+        }
 
         $sql = preg_replace_callback('/\?/', function () use (&$bindings) {
             $value = array_shift($bindings);
-            if (is_numeric($value)) {
-                return $value;
-            }
-            return "'" . addslashes($value) . "'";
+
+            return match (true) {
+                $value === null    => 'NULL',
+                is_bool($value)    => $value ? 'TRUE' : 'FALSE',
+                is_numeric($value) => (string) $value,
+                is_array($value)   => "'" . addslashes(json_encode($value)) . "'",
+                default            => "'" . addslashes((string) $value) . "'",
+            };
         }, $sql);
 
-        // Reset Query Builder
-        $this->reset();
+        // Deliberately no reset() — inspecting a query used to destroy it, so
+        // ->where(...)->debug() then ->get() ran without the where.
         return "{$sql};";
     }
 
@@ -985,7 +1206,7 @@ class Model
      *
      * @param callable $callback Callback Function. Use Model as Argument. Example: function(Model $model) { ... }
      * @return mixed Returns the result of the callback
-     * @throws \RuntimeException Throws an exception if the transaction fails
+     * @throws \Throwable Whatever the callback threw, unwrapped.
      */
     public function transaction(callable $callback): mixed
     {
@@ -1007,8 +1228,10 @@ class Model
                 // worth reporting, so swallow this and fall through.
             }
 
-            $table = $this->table ?? 'unknown';
-            throw new \RuntimeException("Table [{$table}] Transaction Failed [{$e->getMessage()}]", (int) $e->getCode(), $e);
+            // Rethrow as-is. Wrapping destroyed PDOException::$errorInfo and the
+            // SQLSTATE, and turned a domain exception thrown to abort the
+            // transaction into an unrecognisable RuntimeException.
+            throw $e;
         }
     }
 
@@ -1032,6 +1255,53 @@ class Model
      * @param string $compare Optional comparison type (AND, OR)
      * @return void
      */
+    /**
+     * Add the soft-delete predicate to a read.
+     *
+     * Only applies to a soft-delete model. Previously $softDelete affected
+     * delete() alone, so reads returned trashed rows by default.
+     */
+    private function applyTrashFilter(): void
+    {
+        if ($this->onlyTrashed) {
+            $this->addWhere($this->sanitize($this->deletedAtColumn) . ' IS NOT NULL');
+            return;
+        }
+
+        if ($this->softDelete && !$this->withTrashed) {
+            $this->addWhere($this->sanitize($this->deletedAtColumn) . ' IS NULL');
+        }
+    }
+
+    /**
+     * Prepare, bind and execute.
+     *
+     * PDOStatement::execute($array) binds every value as PDO::PARAM_STR. Column
+     * affinity usually hides that, but a comparison with no column to convert
+     * against — HAVING against an aggregate alias, say — then compares an
+     * integer to a string and silently matches nothing.
+     */
+    private function run(string $sql, array $bindings): \PDOStatement
+    {
+        $stmt = $this->pdo()->prepare($sql);
+
+        $i = 0;
+        foreach ($bindings as $value) {
+            $type = match (true) {
+                $value === null => \PDO::PARAM_NULL,
+                is_bool($value) => \PDO::PARAM_BOOL,
+                is_int($value)  => \PDO::PARAM_INT,
+                default         => \PDO::PARAM_STR,
+            };
+
+            $stmt->bindValue(++$i, $value, $type);
+        }
+
+        $stmt->execute();
+
+        return $stmt;
+    }
+
     private function addWhere(string $condition, array $bindings = [], string $compare = 'AND'): void
     {
         $compare = strtoupper($compare);
@@ -1048,8 +1318,12 @@ class Model
     private function build(): string
     {
         if (empty($this->table)) {
-            throw new \PDOException("Table Name Not Found!");
+            throw new ModelException("Table Name Not Found!");
         }
+
+        // A soft-delete model hides trashed rows unless asked otherwise. This
+        // has to happen before the WHERE is assembled below.
+        $this->applyTrashFilter();
 
         // Sanitize Table
         $tbl = $this->sanitize($this->table);
@@ -1070,6 +1344,11 @@ class Model
 
         if (!empty($this->having)) {
             $sql .= " HAVING " . implode(' AND ', $this->having);
+
+            // HAVING is emitted after WHERE, so its bindings belong after the
+            // WHERE bindings regardless of the order the methods were called in.
+            $this->bindings = array_merge($this->bindings, $this->havingBindings);
+            $this->havingBindings = [];
         }
 
         if (!empty($this->orderBy)) {
@@ -1080,32 +1359,37 @@ class Model
 
         if ($this->page !== null) {
             if ($this->limit === null) {
-                throw new \InvalidArgumentException(
-                    "Limit() Must Be Set Before Using Offset()."
+                throw new ModelException(
+                    "limit() Must Be Set Before Using page()."
                 );
             }
             $offset = ($this->page - 1) * $this->limit;
         }
 
         if ($this->limit !== null) {
-            switch ($this->driver) {
+            switch ($this->driver()) {
                 case 'sqlsrv':
                     if ($offset !== null) {
                         if (empty($this->orderBy)) {
-                            throw new \InvalidArgumentException(
+                            throw new ModelException(
                                 "SQL Server Requires ORDER BY When Using OFFSET."
                             );
                         }
                         $sql .= " OFFSET {$offset} ROWS FETCH NEXT {$this->limit} ROWS ONLY";
                     } else {
-                        $sql = preg_replace('/^SELECT\s+/i', "SELECT TOP {$this->limit} ", $sql);
+                        // T-SQL wants SELECT DISTINCT TOP n, not SELECT TOP n DISTINCT.
+                        $sql = preg_replace(
+                            '/^SELECT\s+(DISTINCT\s+)?/i',
+                            "SELECT $1TOP {$this->limit} ",
+                            $sql
+                        );
                     }
                     break;
 
                 case 'oci':
                     if ($offset !== null) {
                         if (empty($this->orderBy)) {
-                            throw new \InvalidArgumentException(
+                            throw new ModelException(
                                 "Oracle Requires ORDER BY When Using OFFSET."
                             );
                         }
@@ -1135,52 +1419,89 @@ class Model
 
     /**
      * Apply type casts to a fetched row.
-     * @return array
+     * @return array|object
      */
-    protected function cast(array $row): array
+    protected function cast(array|object $row): array|object
     {
         foreach ($this->casts as $column => $type) {
-            if (!array_key_exists($column, $row)) continue;
+            if (!$this->rowHas($row, $column)) continue;
 
-            $value = $row[$column];
+            $value = $this->rowGet($row, $column);
 
-            $row[$column] = match (strtolower($type)) {
-                'int', 'integer'  => (int) $value,
+            // NULL means "absent" and must survive the cast. int/float/bool
+            // used to coerce it to 0/0.0/false, losing the distinction.
+            if ($value === null) {
+                continue;
+            }
+
+            $row = $this->rowSet($row, $column, match (strtolower($type)) {
+                'int', 'integer'  => $this->castInt($value),
                 'float', 'double' => (float) $value,
 
-                // Fix: compare against known falsy values instead of naive (bool) cast
-                'bool', 'boolean' => !in_array($value, [0, '0', '', 'false', false, null], true),
+                // DECIMAL comes back as a string from every driver; routing it
+                // through float would introduce binary rounding error.
+                'decimal'         => (string) $value,
 
-                // Fix: guard against null and catch malformed JSON
-                'array', 'json'   => $value === null
-                                        ? null
-                                        : (static function () use ($value) {
-                                                $decoded = json_decode((string) $value, true);
-                                                if (json_last_error() !== JSON_ERROR_NONE) {
-                                                    throw new \UnexpectedValueException(
-                                                        "Failed to decode JSON: " . json_last_error_msg()
-                                                    );
-                                                }
-                                                return $decoded;
-                                            })(),
-                'serialize' => $value === null
-                                    ? null
-                                    : (static function () use ($value) {
-                                        // unserialize returns false on failure — never suppress with @
-                                        $result = unserialize((string) $value);
-                                        if ($result === false && (string) $value !== 'b:0;') {
-                                            throw new \UnexpectedValueException(
-                                                "Failed to unserialize value: [{$value}]"
-                                            );
-                                        }
-                                        return $result;
-                                    })(),
+                // Compare against known falsy values instead of a naive (bool)
+                // cast. 't'/'f' are what pdo_pgsql returns for a boolean.
+                'bool', 'boolean' => !in_array(
+                    is_string($value) ? strtolower($value) : $value,
+                    [0, 0.0, '0', '', 'false', 'f', 'off', 'no', false],
+                    true
+                ),
 
-                'string'          => $value === null ? null : (string) $value,
-                default           => $value,
-            };
+                'array', 'json'   => (static function () use ($value) {
+                        $decoded = json_decode((string) $value, true);
+                        if (json_last_error() !== JSON_ERROR_NONE) {
+                            throw new ModelException(
+                                "Failed to decode JSON: " . json_last_error_msg()
+                            );
+                        }
+                        return $decoded;
+                    })(),
+
+                'serialize' => (static function () use ($value) {
+                        // No object instantiation from database content.
+                        $result = unserialize((string) $value, ['allowed_classes' => false]);
+                        if ($result === false && (string) $value !== 'b:0;') {
+                            throw new ModelException(
+                                "Failed to unserialize value: [{$value}]"
+                            );
+                        }
+                        return $result;
+                    })(),
+
+                'string'          => (string) $value,
+
+                // Falling through silently made a typo like 'integar' invisible.
+                default           => throw new ModelException(
+                    "Unknown cast type [{$type}] for column [{$column}]."
+                ),
+            });
         }
+
         return $row;
+    }
+
+    /**
+     * Cast to int without silently clamping.
+     *
+     * A BIGINT UNSIGNED past PHP_INT_MAX (a snowflake id, say) would come back
+     * as PHP_INT_MAX. Keeping it as a string is lossless.
+     */
+    private function castInt(mixed $value): int|string
+    {
+        if (is_string($value) && preg_match('/^-?\d+$/', $value)) {
+            $asInt = (int) $value;
+
+            if ((string) $asInt !== ltrim($value, '+')) {
+                return $value;
+            }
+
+            return $asInt;
+        }
+
+        return (int) $value;
     }
 
     /**
@@ -1198,7 +1519,38 @@ class Model
         $this->limit    =   null;
         $this->page     =   null;
         $this->having   =   [];
-        $this->softDelete = false;
+        $this->havingBindings = [];
+        $this->softDelete = $this->softDeleteDefault;
+        $this->withTrashed = false;
+        $this->onlyTrashed = false;
+    }
+
+    /**
+     * Read a column from a fetched row.
+     *
+     * Rows are arrays under PDO::FETCH_ASSOC and stdClass under FETCH_OBJ, and
+     * callers may set either through the connection's `options`. These three
+     * helpers are the only places that care which.
+     */
+    protected function rowGet(array|object $row, string $key): mixed
+    {
+        return is_array($row) ? ($row[$key] ?? null) : ($row->{$key} ?? null);
+    }
+
+    protected function rowHas(array|object $row, string $key): bool
+    {
+        return is_array($row) ? array_key_exists($key, $row) : property_exists($row, $key);
+    }
+
+    protected function rowSet(array|object $row, string $key, mixed $value): array|object
+    {
+        if (is_array($row)) {
+            $row[$key] = $value;
+        } else {
+            $row->{$key} = $value;
+        }
+
+        return $row;
     }
 
     private function wrapIdent(string $name, string $driver): string
@@ -1220,19 +1572,21 @@ class Model
         // return preg_replace('/[^a-zA-Z0-9_]/', '', $identifier);
 
         // Handle table.column notation
+        $driver = $this->driver();
+
         if (str_contains($identifier, '.')) {
             [$table, $column] = explode('.', $identifier, 2);
-            return $this->wrapIdent($this->validate($table), $this->driver)
+            return $this->wrapIdent($this->validate($table), $driver)
                 . '.'
-                . $this->wrapIdent($this->validate($column), $this->driver);
+                . $this->wrapIdent($this->validate($column), $driver);
         }
 
-        return $this->wrapIdent($this->validate($identifier), $this->driver);
+        return $this->wrapIdent($this->validate($identifier), $driver);
     }
 
     private function validate(string $name): string
     {
-        if (!preg_match('/^[a-zA-Z_][a-zA-Z0-9_\.]*$/', $name)) {
+        if (!preg_match('/^[a-zA-Z_][a-zA-Z0-9_]*$/', $name)) {
             throw new ModelException("Invalid Identifier [{$name}].");
         }
         return $name;
@@ -1244,7 +1598,7 @@ class Model
      */
     private function __clone()
     {
-        throw new \Exception('Cloning is Not Allowed.');
+        throw new ModelException('Cloning is Not Allowed.');
     }
 
     /**
@@ -1253,7 +1607,7 @@ class Model
      */
     public function __wakeup()
     {
-        throw new \Exception('Unserializing is Not Allowed.');
+        throw new ModelException('Unserializing is Not Allowed.');
     }
 
     /**
@@ -1266,13 +1620,4 @@ class Model
         return isset($this->$prop);
     }
 
-    /**
-     * Get Property Value
-     * @param string $prop Property Name
-     * @return mixed
-     */
-    public function __get($prop): mixed
-    {
-        return $this->$prop;
-    }
 }

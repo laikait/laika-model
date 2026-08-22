@@ -49,6 +49,28 @@ class DriverFactory
     }
 
     /**
+     * Drop a custom driver registration.
+     *
+     * Built-in aliases are never removed — this only undoes register(). Without
+     * it a registration made in one test leaks into every test that follows,
+     * since the registry is static.
+     *
+     * @return bool Whether anything was actually removed.
+     */
+    public static function unregister(string $alias): bool
+    {
+        $alias = strtolower($alias);
+
+        if (!isset(self::$custom[$alias])) {
+            return false;
+        }
+
+        unset(self::$custom[$alias]);
+
+        return true;
+    }
+
+    /**
      * Resolve a driver instance from a config array.
      */
     public static function make(array $config): DriverInterface
