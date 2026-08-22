@@ -80,7 +80,26 @@ class SqlSrvGrammar extends Grammar
     protected function typeString(array $col): string       { return 'NVARCHAR(' . ($col['length'] ?? 255) . ')'; }
     protected function typeBinary(array $col): string       { return 'VARBINARY(MAX)'; }
     protected function typeUid(array $col): string          { return 'UNIQUEIDENTIFIER'; }
+
+    /**
+     * Index names are scoped to the table on this driver, so the name the
+     * source chose is already unique and is kept verbatim.
+     */
+    protected function qualifyIndexName(string $table, string $base): string
+    {
+        return $base;
+    }
+
     protected function autoIncrementKeyword(): string       { return 'IDENTITY(1,1)'; }
+
+    /** T-SQL has no DOUBLE; FLOAT(53) is the 8-byte equivalent. */
+    protected function typeDouble(array $col): string       { return 'FLOAT(53)'; }
+
+    /**
+     * In T-SQL a bare TIMESTAMP column is a `rowversion` — an auto-generated
+     * binary counter, not a point in time. DATETIME2 is the real equivalent.
+     */
+    protected function typeTimestamp(array $col): string    { return 'DATETIME2'; }
     protected function typeTinyBlob(array $col): string     { return 'VARBINARY(MAX)'; }
     protected function typeBlob(array $col): string         { return 'VARBINARY(MAX)'; }
     protected function typeMediumBlob(array $col): string   { return 'VARBINARY(MAX)'; }

@@ -8,6 +8,11 @@
             "Laika\\Model\\": "src/"
         }
     },
+    "autoload-dev": {
+        "psr-4": {
+            "Laika\\Model\\Tests\\": "tests/"
+        }
+    },
     "authors": [
         {
             "name": "Laika IT",
@@ -32,7 +37,7 @@
     "prefer-stable": true,
     "scripts": {
         "test": [
-            "@php vendor/bin/phpunit --configuration phpunit.xml.dist --colors=always --testdox || true"
+            "@php vendor/bin/phpunit --configuration phpunit.xml.dist --colors=always --testdox"
         ],
         "lint": "php-cs-fixer fix --dry-run --diff",
         "compat": "phpcs --standard=phpcs.xml --report=full"

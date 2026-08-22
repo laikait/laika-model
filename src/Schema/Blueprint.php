@@ -228,7 +228,7 @@ class Blueprint
     /**
      * Char Column
      * @param string $name Column Name
-     * @param string $length Column Length. Default is 36
+     * @param int $length Column Length. Default is 36
      * @return ColumnDefinition
      */
     public function char(string $name, int $length = 36): ColumnDefinition

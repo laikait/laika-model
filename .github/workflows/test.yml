@@ -32,7 +32,7 @@ jobs:
         uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240
         with:
           php-version: ${{ matrix.php-version }}
-          extensions: pdo, json, mbstring
+          extensions: pdo, pdo_sqlite, json, mbstring
           coverage: none
           tools: composer
 
@@ -42,7 +42,7 @@ jobs:
 
       # Parses every file with the matrix version's own parser.
       - name: Lint PHP syntax
-        run: find src -name '*.php' -print0 | xargs -0 -n1 -- php -l
+        run: find src tests -name '*.php' -print0 | xargs -0 -n1 -- php -l
 
       # Install Dev Tooling
       # --prefer-dist pulls zipballs from api.github.com and disables source
@@ -57,6 +57,12 @@ jobs:
       # later version, signatures that changed, behaviour flagged for removal.
       - name: PHPCompatibility check (8.1-8.5)
         run: vendor/bin/phpcs --standard=phpcs.xml --report=full
+
+      # The registry, driver-option and DSN-builder tests need no database
+      # server; the live-connection tests run against SQLite ":memory:".
+      # Server-backed drivers are covered by the matrix in release.yml.
+      - name: PHPUnit
+        run: composer test
 
       - name: Report result
         if: success()
