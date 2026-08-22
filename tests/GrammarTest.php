@@ -22,6 +22,7 @@ use Laika\Model\Schema\Grammars\SqliteGrammar;
 use Laika\Model\Schema\Grammars\SqlSrvGrammar;
 use Laika\Model\Schema\Schema;
 use Laika\Model\Connection;
+use Laika\Model\Model;
 
 /**
  * Golden-string tests for the DDL writers.
@@ -32,6 +33,16 @@ use Laika\Model\Connection;
  */
 class GrammarTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        Connection::purge();
+    }
+
+    protected function tearDown(): void
+    {
+        Connection::purge();
+    }
+
     /** @return array<string,array{Grammar}> */
     public static function grammarProvider(): array
     {
@@ -408,17 +419,30 @@ class GrammarTest extends TestCase
     // Full-table golden strings
     // -----------------------------------------------------------------------
 
+    /**
+     * The "posts" table shape, defined once.
+     *
+     * fullBlueprint() feeds it to a grammar directly for the golden-string
+     * tests; Schema::create() feeds it the same closure for the live one.
+     */
+    private function postsDefinition(): \Closure
+    {
+        return function (Blueprint $bp): void {
+            $bp->id();
+            $bp->string('title', 190);
+            $bp->text('body');
+            $bp->boolean('published');
+            $bp->integer('author_id');
+            $bp->unique('title');
+            $bp->index('author_id');
+            $bp->foreign('author_id')->reference('id')->on('users')->onDelete('cascade');
+        };
+    }
+
     private function fullBlueprint(): Blueprint
     {
         $bp = new Blueprint('posts');
-        $bp->id();
-        $bp->string('title', 190);
-        $bp->text('body');
-        $bp->boolean('published');
-        $bp->integer('author_id');
-        $bp->unique('title');
-        $bp->index('author_id');
-        $bp->foreign('author_id')->reference('id')->on('users')->onDelete('cascade');
+        ($this->postsDefinition())($bp);
 
         return $bp;
     }
@@ -517,24 +541,27 @@ class GrammarTest extends TestCase
             $this->markTestSkipped('Extension pdo_sqlite is not loaded.');
         }
 
-        $grammar = new SqliteGrammar();
-        $pdo     = new \PDO('sqlite::memory:', null, null, [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION]);
+        Connection::add(['driver' => 'sqlite', 'database' => ':memory:']);
 
-        $users = new Blueprint('users');
-        $users->id();
-        $users->string('name');
-        $pdo->exec($grammar->compileCreate($users));
+        // Schema::on() is the public route to a grammar, so this exercises the
+        // real path; the emitted SQL itself is pinned by the golden strings.
+        Schema::on()->create('users', function (Blueprint $t): void {
+            $t->id();
+            $t->string('name');
+        });
 
-        $bp = $this->fullBlueprint();
-        $pdo->exec($grammar->compileCreate($bp));
-        foreach ($grammar->compileIndexes($bp) as $indexSql) {
-            $pdo->exec($indexSql);
-        }
+        Schema::on()->create('posts', $this->postsDefinition());
 
-        $pdo->exec("INSERT INTO users (name) VALUES ('a')");
-        $pdo->exec("INSERT INTO posts (title, body, published, author_id) VALUES ('t', 'b', 1, 1)");
+        $model = new Model();
+        $model->table('users')->insert(['name' => 'a']);
+        $model->table('posts')->insert([
+            'title'     => 't',
+            'body'      => 'b',
+            'published' => 1,
+            'author_id' => 1,
+        ]);
 
-        $this->assertSame('t', $pdo->query('SELECT title FROM posts')->fetch(\PDO::FETCH_ASSOC)['title']);
+        $this->assertSame('t', $model->table('posts')->where(['id' => 1])->first()['title']);
     }
 
     // -----------------------------------------------------------------------
@@ -659,7 +686,6 @@ class GrammarTest extends TestCase
     /** @dataProvider foreignKeyProvider */
     public function testForeignKeyToggleSqlPerDriver(string $driver, ?string $off, ?string $on): void
     {
-        Connection::purge();
         Connection::add(['driver' => $driver, 'host' => 'db', 'database' => 'app', 'path' => ':memory:']);
 
         $method = new \ReflectionMethod(Schema::class, 'foreignKeyCheckSql');
@@ -673,7 +699,6 @@ class GrammarTest extends TestCase
         $this->assertSame($off, $method->invoke($schema, false));
         $this->assertSame($on, $method->invoke($schema, true));
 
-        Connection::purge();
     }
 
     /** @dataProvider foreignKeyProvider */
@@ -683,7 +708,6 @@ class GrammarTest extends TestCase
             $this->markTestSkipped('FOREIGN_KEY_CHECKS is correct on MySQL.');
         }
 
-        Connection::purge();
         Connection::add(['driver' => $driver, 'host' => 'db', 'database' => 'app', 'path' => ':memory:']);
 
         $method = new \ReflectionMethod(Schema::class, 'foreignKeyCheckSql');
@@ -702,6 +726,5 @@ class GrammarTest extends TestCase
             );
         }
 
-        Connection::purge();
     }
 }

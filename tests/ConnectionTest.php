@@ -15,6 +15,8 @@ namespace Laika\Model\Tests;
 use PDO;
 use PHPUnit\Framework\TestCase;
 use Laika\Model\Connection;
+use Laika\Model\Schema\Schema;
+use Laika\Model\Schema\Blueprint;
 use Laika\Model\Drivers\AbstractDriver;
 use Laika\Model\Drivers\DriverFactory;
 use Laika\Model\Drivers\DriverInterface;
@@ -60,13 +62,13 @@ class ConnectionTest extends TestCase
         return ['driver' => 'sqlite', 'database' => ':memory:'];
     }
 
-    /** Number of tables with the given name visible on a SQLite handle. */
-    private function tableCount(PDO $pdo, string $table): int
+    /** The 'notes' table every isolation test writes to. */
+    private function createNotes(?string $connection = null): void
     {
-        $stmt = $pdo->prepare("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?");
-        $stmt->execute([$table]);
-
-        return (int) $stmt->fetchColumn();
+        Schema::on($connection)->create('notes', function (Blueprint $t): void {
+            $t->id();
+            $t->text('body');
+        });
     }
 
     // -----------------------------------------------------------------------
@@ -258,13 +260,13 @@ class ConnectionTest extends TestCase
 
         $this->assertNotSame($alpha, $beta, 'Each name must get its own PDO instance');
 
-        $alpha->exec('CREATE TABLE only_in_alpha (id INTEGER PRIMARY KEY)');
-        $beta->exec('CREATE TABLE only_in_beta (id INTEGER PRIMARY KEY)');
+        Schema::on('alpha')->create('only_in_alpha', fn (Blueprint $t) => $t->id());
+        Schema::on('beta')->create('only_in_beta', fn (Blueprint $t) => $t->id());
 
-        $this->assertSame(1, $this->tableCount($alpha, 'only_in_alpha'));
-        $this->assertSame(0, $this->tableCount($alpha, 'only_in_beta'), 'beta leaked into alpha');
-        $this->assertSame(1, $this->tableCount($beta, 'only_in_beta'));
-        $this->assertSame(0, $this->tableCount($beta, 'only_in_alpha'), 'alpha leaked into beta');
+        $this->assertTrue(Schema::on('alpha')->hasTable('only_in_alpha'));
+        $this->assertFalse(Schema::on('alpha')->hasTable('only_in_beta'), 'beta leaked into alpha');
+        $this->assertTrue(Schema::on('beta')->hasTable('only_in_beta'));
+        $this->assertFalse(Schema::on('beta')->hasTable('only_in_alpha'), 'alpha leaked into beta');
     }
 
     public function testModelsOnDifferentConnectionsWriteToDifferentDatabases(): void
@@ -275,7 +277,7 @@ class ConnectionTest extends TestCase
         Connection::add($this->memory(), 'beta');
 
         foreach (['alpha', 'beta'] as $name) {
-            Connection::get($name)->exec('CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)');
+            $this->createNotes($name);
         }
 
         (new Model('alpha'))->table('notes')->insert(['body' => 'from alpha']);
@@ -325,14 +327,14 @@ class ConnectionTest extends TestCase
         $this->requireSqlite();
 
         Connection::add($this->memory());
-        Connection::get()->exec('CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)');
+        $this->createNotes();
 
         $model = new Model();
         $model->table('notes')->insert(['body' => 'first database']);
 
         // Re-register the same name against a brand-new in-memory database.
         Connection::add($this->memory());
-        Connection::get()->exec('CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)');
+        $this->createNotes();
 
         $this->assertSame(
             Connection::get(),
@@ -355,7 +357,7 @@ class ConnectionTest extends TestCase
         $this->requireSqlite();
 
         Connection::add($this->memory());
-        Connection::get()->exec('CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)');
+        $this->createNotes();
 
         $model = new Model();
 
@@ -385,7 +387,7 @@ class ConnectionTest extends TestCase
         $this->requireSqlite();
 
         Connection::add($this->memory());
-        Connection::get()->exec('CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)');
+        $this->createNotes();
 
         $model = new Model();
 

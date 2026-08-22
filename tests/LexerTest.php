@@ -13,6 +13,7 @@ declare(strict_types=1);
 namespace Laika\Model\Tests;
 
 use PHPUnit\Framework\TestCase;
+use Laika\Model\Connection;
 use Laika\Model\Converter\Statement;
 use Laika\Model\Converter\StatementReader;
 
@@ -23,6 +24,21 @@ use Laika\Model\Converter\StatementReader;
  */
 class LexerTest extends TestCase
 {
+    /**
+     * The splitter never opens a database — every SQL string in this file is
+     * parser input or expected output. This is isolation hygiene only, so a
+     * leaked registry from another class cannot affect ordering here.
+     */
+    protected function setUp(): void
+    {
+        Connection::purge();
+    }
+
+    protected function tearDown(): void
+    {
+        Connection::purge();
+    }
+
     /**
      * @return string[] The SQL of each statement found.
      */

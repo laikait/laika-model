@@ -165,11 +165,25 @@ final class Converter
      * order does not matter, and re-enabled even if a statement throws.
      *
      * @param string|resource|\SplFileObject $source
+     * @param ?string $connection Connection name (default: the current default).
+     *                            Its driver must match the converter's target —
+     *                            resolving by dialect name instead would make two
+     *                            connections to the same engine unreachable.
+     * @throws ConverterException When $connection targets a different driver.
      * @return int Number of statements executed.
      */
-    public function apply(mixed $source): int
+    public function apply(mixed $source, ?string $connection = null): int
     {
-        $pdo      = Connection::get($this->to);
+        $name = $connection ?? Connection::getDefault();
+
+        if (Connection::driver($name) !== $this->to) {
+            throw new ConverterException(
+                "Connection [{$name}] is a [" . Connection::driver($name) . '] connection, '
+                . "but this converter targets [{$this->to}]."
+            );
+        }
+
+        $pdo      = Connection::get($name);
         $executed = 0;
 
         $this->toggleForeignKeys($pdo, false);

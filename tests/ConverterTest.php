@@ -14,6 +14,8 @@ namespace Laika\Model\Tests;
 
 use PHPUnit\Framework\TestCase;
 use Laika\Model\Connection;
+use Laika\Model\Model;
+use Laika\Model\Schema\Schema;
 use Laika\Model\Converter\Converter;
 use Laika\Model\Converter\TypeLexicon;
 use Laika\Model\Converter\Warning;
@@ -36,6 +38,20 @@ class ConverterTest extends TestCase
         if (!in_array('pdo_sqlite', get_loaded_extensions(), true)) {
             $this->markTestSkipped('Extension pdo_sqlite is not loaded.');
         }
+    }
+
+    /**
+     * Register the in-memory target every round-trip test applies to.
+     *
+     * Connection::get() memoises the handle, so ':memory:' survives across all
+     * the calls in one test.
+     */
+    private function sqliteTarget(string $name = 'target'): string
+    {
+        $this->requireSqlite();
+        Connection::add(['driver' => 'sqlite', 'database' => ':memory:'], $name);
+
+        return $name;
     }
 
     // -----------------------------------------------------------------------
@@ -382,18 +398,16 @@ class ConverterTest extends TestCase
 
     public function testNormalisedTimestampDefaultActuallyExecutes(): void
     {
-        $this->requireSqlite();
+        $target = $this->sqliteTarget();
+        $sql    = 'CREATE TABLE t (`id` int NOT NULL, `created_at` timestamp NOT NULL DEFAULT current_timestamp());';
 
-        $pdo = new \PDO('sqlite::memory:', null, null, [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION]);
-        $sql = 'CREATE TABLE t (`id` int NOT NULL, `created_at` timestamp NOT NULL DEFAULT current_timestamp());';
+        (new Converter('mysql', 'sqlite'))->apply($sql, $target);
 
-        foreach ((new Converter('mysql', 'sqlite'))->stream($sql) as $statement) {
-            $pdo->exec($statement);
-        }
+        $model = new Model($target);
+        $model->table('t')->insert(['id' => 1]);
 
-        $pdo->exec('INSERT INTO t (id) VALUES (1)');
-
-        $this->assertNotEmpty($pdo->query('SELECT created_at FROM t')->fetchColumn());
+        $row = $model->table('t')->where(['id' => 1])->first();
+        $this->assertNotEmpty($row['created_at']);
     }
 
     public function testPostgresSequenceDefaultIsDropped(): void
@@ -522,26 +536,21 @@ INSERT INTO `mod_invoicedata` (`id`, `label`) VALUES (1,'first'),(2,'second');
 UNLOCK TABLES;
 SQL;
 
+        $target    = $this->sqliteTarget();
         $converter = new Converter('mysql', 'sqlite');
-        $out       = $converter->convert(
-            "CREATE TABLE `mod_invoicedata` (`id` int NOT NULL, `label` varchar(50));
-" . $dump
-        );
+        $source    = "CREATE TABLE `mod_invoicedata` (`id` int NOT NULL, `label` varchar(50));
+" . $dump;
+
+        $out = $converter->convert($source);
 
         $this->assertStringNotContainsString('`', $out);
         $this->assertStringNotContainsString('LOCK TABLES', strtoupper($out));
 
-        $pdo = new \PDO('sqlite::memory:', null, null, [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION]);
-        foreach (explode(";
-", trim($out)) as $sql) {
-            if (trim($sql, " 
-;") !== '') {
-                $pdo->exec($sql);
-            }
-        }
+        // apply() re-reads the source through StatementReader, so the sandwich
+        // is split by the library rather than by a hand-rolled explode().
+        $converter->apply($source, $target);
 
-        $rows = $pdo->query('SELECT id, label FROM mod_invoicedata ORDER BY id')
-            ->fetchAll(\PDO::FETCH_ASSOC);
+        $rows = (new Model($target))->table('mod_invoicedata')->order('id')->get();
 
         $this->assertSame(
             [['id' => 1, 'label' => 'first'], ['id' => 2, 'label' => 'second']],
@@ -618,27 +627,27 @@ SQL;
 
     public function testZeroDateTableActuallyExecutes(): void
     {
-        $this->requireSqlite();
-
+        $target    = $this->sqliteTarget();
         $converter = new Converter('mysql', 'sqlite');
-        $out       = $converter->convert(
-            "CREATE TABLE `t` (`id` int NOT NULL, `date` timestamp NOT NULL DEFAULT '0000-00-00 00:00:00');"
+
+        $converter->apply(
+            "CREATE TABLE `t` (`id` int NOT NULL, `date` timestamp NOT NULL DEFAULT '0000-00-00 00:00:00');",
+            $target
         );
 
-        $pdo = new \PDO('sqlite::memory:', null, null, [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION]);
-        $pdo->exec($out);
+        $model = new Model($target);
+        $model->table('t')->insert(['id' => 1, 'date' => '2024-01-01 00:00:00']);
 
-        $pdo->exec("INSERT INTO t (id, date) VALUES (1, '2024-01-01 00:00:00')");
-        $this->assertSame('2024-01-01 00:00:00', $pdo->query('SELECT date FROM t')->fetchColumn());
+        $this->assertSame(
+            '2024-01-01 00:00:00',
+            $model->table('t')->where(['id' => 1])->first()['date']
+        );
 
         // The zero-date row must land too — that is the whole point of relaxing
         // NOT NULL, and it is where apply() failed against PostgreSQL.
-        $rows = (new Converter('mysql', 'sqlite'))->convert(
-            "INSERT INTO `t` (`id`, `date`) VALUES (2, '0000-00-00 00:00:00');"
-        );
-        $pdo->exec($rows);
+        $converter->apply("INSERT INTO `t` (`id`, `date`) VALUES (2, '0000-00-00 00:00:00');", $target);
 
-        $this->assertNull($pdo->query('SELECT date FROM t WHERE id = 2')->fetchColumn());
+        $this->assertNull($model->table('t')->where(['id' => 2])->first()['date']);
     }
 
     public function testOnlyZeroDateColumnsLoseNotNull(): void
@@ -785,17 +794,16 @@ SQL;
          (2,2,'Second','It\'s fine',NULL);
         SQL;
 
+        $target    = $this->sqliteTarget();
         $converter = new Converter('mysql', 'sqlite');
 
-        $pdo = new \PDO('sqlite::memory:', null, null, [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION]);
-        $pdo->exec('PRAGMA foreign_keys = ON');
+        $converter->apply($dump, $target);
 
-        foreach ($converter->stream($dump) as $sql) {
-            $pdo->exec($sql);
-        }
+        // apply() disables FK checks for the duration and restores them in its
+        // finally, so enforcement is turned on after the load, not before.
+        Schema::on($target)->enableForeignKeyChecks();
 
-        $authors = $pdo->query('SELECT id, name, active FROM authors ORDER BY id')
-            ->fetchAll(\PDO::FETCH_ASSOC);
+        $model = new Model($target);
 
         $this->assertSame(
             [
@@ -803,11 +811,13 @@ SQL;
                 ['id' => 2, 'name' => "O'Brien; the second", 'active' => 0],
                 ['id' => 3, 'name' => "quo'ted", 'active' => 1],
             ],
-            $authors
+            $model->table('authors')->select(['id', 'name', 'active'])->order('id')->get()
         );
 
-        $posts = $pdo->query('SELECT id, author_id, title, body, score FROM posts ORDER BY id')
-            ->fetchAll(\PDO::FETCH_ASSOC);
+        $posts = $model->table('posts')
+            ->select(['id', 'author_id', 'title', 'body', 'score'])
+            ->order('id')
+            ->get();
 
         $this->assertSame('First; post', $posts[0]['title']);
         $this->assertSame('Body with a ; semicolon', $posts[0]['body']);
@@ -815,31 +825,35 @@ SQL;
         $this->assertSame("It's fine", $posts[1]['body']);
         $this->assertNull($posts[1]['score']);
 
-        // The index survived as a separate CREATE INDEX statement.
-        $indexes = $pdo->query("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'posts'")
-            ->fetchAll(\PDO::FETCH_COLUMN);
+        // The index survived as a separate CREATE INDEX statement. Schema has
+        // hasTable()/hasColumn() but no index introspection, so this goes
+        // through Model::execute() — the sanctioned prepared-and-logged route.
+        $indexes = $model->execute(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'posts'"
+        )->fetchAll(\PDO::FETCH_COLUMN);
         $this->assertContains('idx_posts_author', $indexes);
 
-        // And the foreign key is live.
-        $this->expectException(\PDOException::class);
-        $pdo->exec("INSERT INTO posts (id, author_id, title) VALUES (99, 404, 'orphan')");
+        // And the foreign key is live. Model::insert() wraps the driver error.
+        $this->expectException(\RuntimeException::class);
+        $model->table('posts')->insert(['id' => 99, 'author_id' => 404, 'title' => 'orphan']);
     }
 
     public function testApplyExecutesAgainstARegisteredConnection(): void
     {
-        $this->requireSqlite();
+        $target = $this->sqliteTarget();
 
-        Connection::add(['driver' => 'sqlite', 'database' => ':memory:'], 'target');
-
-        $dump = "CREATE TABLE `t` (`id` int NOT NULL AUTO_INCREMENT, `v` varchar(20), PRIMARY KEY (`id`));\n"
+        $dump = "CREATE TABLE `t` (`id` int NOT NULL AUTO_INCREMENT, `v` varchar(20), PRIMARY KEY (`id`));
+"
             . "INSERT INTO `t` (`id`, `v`) VALUES (1,'a'),(2,'b');";
 
-        $executed = (new Converter('mysql', 'sqlite'))->apply($dump);
+        $executed = (new Converter('mysql', 'sqlite'))->apply($dump, $target);
 
         $this->assertSame(3, $executed);
 
-        $rows = Connection::get('target')->query('SELECT v FROM t ORDER BY id')->fetchAll(\PDO::FETCH_COLUMN);
-        $this->assertSame(['a', 'b'], $rows);
+        $this->assertSame(
+            ['a', 'b'],
+            (new Model($target))->table('t')->order('id')->pluck('v')
+        );
     }
 
     public function testApplyRefusesAMismatchedConnection(): void
@@ -849,7 +863,7 @@ SQL;
         $this->expectException(ConverterException::class);
         $this->expectExceptionMessageMatches('/targets \[pgsql\]/');
 
-        (new Converter('mysql', 'pgsql'))->apply('CREATE TABLE t (a int);');
+        (new Converter('mysql', 'pgsql'))->apply('CREATE TABLE t (a int);', 'wrong');
     }
 
     // -----------------------------------------------------------------------
