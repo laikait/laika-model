@@ -18,7 +18,12 @@ abstract class SchemaAbstract
 {
     protected string $table;
 
-    protected string $connection = 'default';
+    protected string $connection;
+
+    public function __construct(?string $connection = null)
+    {
+        $this->connection = $connection ?: 'default';
+    }
 
     abstract public function up(): void;
     
