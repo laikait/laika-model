@@ -1620,4 +1620,13 @@ class Model
         return isset($this->$prop);
     }
 
+    /**
+     * Get Property Value
+     * @param string $prop Property Name
+     * @return mixed
+     */
+    public function __get($prop): mixed
+    {
+        return $this->$prop;
+    }
 }
