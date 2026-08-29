@@ -118,12 +118,7 @@ abstract class Grammar
             'longBlob'      => $this->typeLongBlob($col),
             'enum'          => $this->typeEnum($col),
             'set'           => $this->typeSet($col),
-            // Every type reaching here comes from Blueprint's private addColumn(), so an
-            // unrecognised one is a framework bug. Emitting it verbatim turns that into a
-            // driver-specific SQL error at migration time, which is how 'longtext' shipped.
-            default         => throw new SchemaException(
-                "Unknown column type [{$col['type']}] in column [{$col['name']}]."
-            ),
+            default         => $this->rawType($col),
         };
     }
 
@@ -146,6 +141,31 @@ abstract class Grammar
     protected function typeBoolean(array $col): string      { return 'TINYINT(1)'; }
     protected function typeString(array $col): string       { return 'VARCHAR(' . ($col['length'] ?? 255) . ')'; }
     protected function typeChar(array $col): string         { return 'CHAR(' . ($col['length'] ?? 36) . ')'; }
+
+    /**
+     * A type the match did not recognise.
+     *
+     * The converter deliberately carries a native type with no canonical
+     * equivalent (GEOMETRY, INET, INTERVAL, ...) and marks it `raw` via
+     * BlueprintBuilder::rawColumn(); that is emitted verbatim.
+     *
+     * An *unflagged* unknown type cannot come from user code - addColumn() is
+     * private and every canonical type has a match arm - so it is a framework
+     * bug. Emitting it would send invalid SQL to the database, which is how the
+     * 'longtext' typo shipped.
+     * @throws SchemaException
+     */
+    protected function rawType(array $col): string
+    {
+        if (!empty($col['raw'])) {
+            return strtoupper($col['type']);
+        }
+
+        throw new SchemaException(
+            "Unknown column type [{$col['type']}] in column [{$col['name']}]."
+        );
+    }
+
     protected function typeText(array $col): string         { return 'TEXT'; }
     protected function typeMediumText(array $col): string   { return 'MEDIUMTEXT'; }
     protected function typeLongText(array $col): string     { return 'LONGTEXT'; }

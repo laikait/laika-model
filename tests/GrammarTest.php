@@ -973,8 +973,8 @@ class GrammarTest extends TestCase
     }
 
     /**
-     * Blueprint::addColumn() is private and every canonical type has a match arm,
-     * so an unrecognised type is a framework bug. It must fail here rather than
+     * An unflagged unrecognised type is a framework bug: addColumn() is private
+     * and every canonical type has a match arm. It must fail here rather than
      * reach the database as raw SQL.
      *
      * @dataProvider grammarProvider
@@ -986,6 +986,25 @@ class GrammarTest extends TestCase
 
         $this->expectException(SchemaException::class);
         $method->invoke($grammar, ['type' => 'longtext', 'name' => 'changes']);
+    }
+
+    /**
+     * The converter carries a native type with no canonical equivalent through
+     * verbatim, marking it `raw` in BlueprintBuilder::rawColumn(). That flag is
+     * the contract with the guard above - without this test, tightening the
+     * default arm silently broke Converter passthrough.
+     *
+     * @dataProvider grammarProvider
+     */
+    public function testRawColumnTypeIsCarriedThrough(Grammar $grammar): void
+    {
+        $method = new \ReflectionMethod($grammar, 'resolveType');
+        $method->setAccessible(true);
+
+        $this->assertSame(
+            'GEOMETRY',
+            $method->invoke($grammar, ['type' => 'GEOMETRY', 'name' => 'geom', 'raw' => true])
+        );
     }
 
     // -----------------------------------------------------------------------
