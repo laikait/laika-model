@@ -14,6 +14,7 @@ namespace Laika\Model\Schema\Grammars;
 
 use Laika\Model\Schema\Blueprint;
 use Laika\Model\Schema\Expression;
+use Laika\Model\Exceptions\SchemaException;
 
 abstract class Grammar
 {
@@ -46,6 +47,7 @@ abstract class Grammar
         $sql .= $this->defaultBeforeNullable()
             ? $default . $nullable
             : $nullable . $default;
+
 
         // autoIncrementKeyword() and columnComment() return '' on drivers that
         // have no equivalent — appending unconditionally would leave a trailing
@@ -116,7 +118,7 @@ abstract class Grammar
             'longBlob'      => $this->typeLongBlob($col),
             'enum'          => $this->typeEnum($col),
             'set'           => $this->typeSet($col),
-            default         => strtoupper($col['type']),
+            default         => $this->rawType($col),
         };
     }
 
@@ -139,6 +141,31 @@ abstract class Grammar
     protected function typeBoolean(array $col): string      { return 'TINYINT(1)'; }
     protected function typeString(array $col): string       { return 'VARCHAR(' . ($col['length'] ?? 255) . ')'; }
     protected function typeChar(array $col): string         { return 'CHAR(' . ($col['length'] ?? 36) . ')'; }
+
+    /**
+     * A type the match did not recognise.
+     *
+     * The converter deliberately carries a native type with no canonical
+     * equivalent (GEOMETRY, INET, INTERVAL, ...) and marks it `raw` via
+     * BlueprintBuilder::rawColumn(); that is emitted verbatim.
+     *
+     * An *unflagged* unknown type cannot come from user code - addColumn() is
+     * private and every canonical type has a match arm - so it is a framework
+     * bug. Emitting it would send invalid SQL to the database, which is how the
+     * 'longtext' typo shipped.
+     * @throws SchemaException
+     */
+    protected function rawType(array $col): string
+    {
+        if (!empty($col['raw'])) {
+            return strtoupper($col['type']);
+        }
+
+        throw new SchemaException(
+            "Unknown column type [{$col['type']}] in column [{$col['name']}]."
+        );
+    }
+
     protected function typeText(array $col): string         { return 'TEXT'; }
     protected function typeMediumText(array $col): string   { return 'MEDIUMTEXT'; }
     protected function typeLongText(array $col): string     { return 'LONGTEXT'; }

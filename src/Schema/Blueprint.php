@@ -222,7 +222,7 @@ class Blueprint
      */
     public function serialize(string $name): ColumnDefinition
     {
-        return $this->addColumn('longtext', $name);
+        return $this->addColumn('longText', $name);
     }
 
     /**
@@ -313,15 +313,23 @@ class Blueprint
     /**
      * Timestamps.
      * Add 'created' & 'updated' Timestamp Columns.
+     *
+     * $created defaults to CURRENT_TIMESTAMP, so the database fills it on insert.
+     *
+     * $updated is nullable with no default and is NOT maintained automatically on
+     * any driver - the caller sets it when writing the row. ON UPDATE
+     * CURRENT_TIMESTAMP is a MySQL-only column attribute and is deliberately not
+     * emitted, so this column behaves the same on every engine.
+     *
      * @param string $created Created Column Name. Default is 'created_at'
      * @param string $updated Updated Column Name. Default is 'updated_at'
-     * 'default' Column is Nullable
      * @return void
      * */
     public function timestamps(string $created = 'created_at', string $updated = 'updated_at'): void
     {
-        $this->timestamp($created)->default(fn () => 'CURRENT_TIMESTAMP');
-        $this->timestamp($updated)->nullable()->default(fn () => 'NULL ON UPDATE CURRENT_TIMESTAMP');
+        // timestamp() already applies the CURRENT_TIMESTAMP default.
+        $this->timestamp($created);
+        $this->timestamp($updated)->nullable()->default(null);
     }
 
     /**
