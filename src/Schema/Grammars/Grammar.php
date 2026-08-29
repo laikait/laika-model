@@ -14,6 +14,7 @@ namespace Laika\Model\Schema\Grammars;
 
 use Laika\Model\Schema\Blueprint;
 use Laika\Model\Schema\Expression;
+use Laika\Model\Exceptions\SchemaException;
 
 abstract class Grammar
 {
@@ -46,6 +47,7 @@ abstract class Grammar
         $sql .= $this->defaultBeforeNullable()
             ? $default . $nullable
             : $nullable . $default;
+
 
         // autoIncrementKeyword() and columnComment() return '' on drivers that
         // have no equivalent — appending unconditionally would leave a trailing
@@ -116,7 +118,12 @@ abstract class Grammar
             'longBlob'      => $this->typeLongBlob($col),
             'enum'          => $this->typeEnum($col),
             'set'           => $this->typeSet($col),
-            default         => strtoupper($col['type']),
+            // Every type reaching here comes from Blueprint's private addColumn(), so an
+            // unrecognised one is a framework bug. Emitting it verbatim turns that into a
+            // driver-specific SQL error at migration time, which is how 'longtext' shipped.
+            default         => throw new SchemaException(
+                "Unknown column type [{$col['type']}] in column [{$col['name']}]."
+            ),
         };
     }
 

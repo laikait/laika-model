@@ -906,4 +906,156 @@ class GrammarTest extends TestCase
         }
 
     }
+
+    // -----------------------------------------------------------------------
+    // Column types
+    // -----------------------------------------------------------------------
+
+    /**
+     * serialize() used to pass the type string 'longtext' where resolveType()
+     * matches 'longText'. The lowercase spelling hit no arm, fell through to the
+     * default, and was emitted verbatim -- so every non-MySQL driver got a raw
+     * LONGTEXT and refused the CREATE. MySQL only survived because LONGTEXT is a
+     * real MySQL type.
+     *
+     * @dataProvider serializeTypeProvider
+     */
+    public function testSerializeCompilesToAValidTypeOnEveryDriver(Grammar $grammar, string $expected): void
+    {
+        $bp = new Blueprint('activities');
+        $bp->serialize('changes');
+
+        $sql = $grammar->compileCreate($bp);
+
+        $this->assertStringContainsString($expected, $sql);
+
+        if (!$grammar instanceof MySqlGrammar) {
+            $this->assertStringNotContainsString(
+                'LONGTEXT',
+                $sql,
+                'LONGTEXT is not a type on this engine'
+            );
+        }
+    }
+
+    /** @return array<string,array{Grammar,string}> */
+    public static function serializeTypeProvider(): array
+    {
+        return [
+            'mysql'    => [new MySqlGrammar(),    'LONGTEXT'],
+            'pgsql'    => [new PgSqlGrammar(),    'TEXT'],
+            'sqlite'   => [new SqliteGrammar(),   'TEXT'],
+            'sqlsrv'   => [new SqlSrvGrammar(),   'NVARCHAR(MAX)'],
+            'oracle'   => [new OracleGrammar(),   'CLOB'],
+            'firebird' => [new FirebirdGrammar(), 'BLOB SUB_TYPE TEXT'],
+        ];
+    }
+
+    /**
+     * The invariant that actually broke: serialize() is long text, so it must
+     * compile to whatever longText() compiles to on every engine.
+     *
+     * @dataProvider grammarProvider
+     */
+    public function testSerializeMatchesLongText(Grammar $grammar): void
+    {
+        $a = new Blueprint('t');
+        $a->serialize('c');
+
+        $b = new Blueprint('t');
+        $b->longText('c');
+
+        $this->assertSame(
+            $grammar->compileCreate($b),
+            $grammar->compileCreate($a),
+            'serialize() and longText() must agree'
+        );
+    }
+
+    /**
+     * Blueprint::addColumn() is private and every canonical type has a match arm,
+     * so an unrecognised type is a framework bug. It must fail here rather than
+     * reach the database as raw SQL.
+     *
+     * @dataProvider grammarProvider
+     */
+    public function testUnknownColumnTypeThrows(Grammar $grammar): void
+    {
+        $method = new \ReflectionMethod($grammar, 'resolveType');
+        $method->setAccessible(true);
+
+        $this->expectException(SchemaException::class);
+        $method->invoke($grammar, ['type' => 'longtext', 'name' => 'changes']);
+    }
+
+    // -----------------------------------------------------------------------
+    // timestamps()
+    // -----------------------------------------------------------------------
+
+    /**
+     * ON UPDATE CURRENT_TIMESTAMP is a MySQL-only column attribute. It used to be
+     * injected as a raw default expression, so it leaked verbatim into all six
+     * dialects and made the CREATE a syntax error on the other five. It is now
+     * dropped outright rather than emulated, so no driver emits it and updated_at
+     * behaves identically everywhere.
+     *
+     * @dataProvider grammarProvider
+     */
+    public function testNoDriverEmitsOnUpdateCurrentTimestamp(Grammar $grammar): void
+    {
+        $bp = new Blueprint('posts');
+        $bp->timestamps();
+
+        $this->assertStringNotContainsString(
+            'ON UPDATE',
+            $grammar->compileCreate($bp),
+            'updated_at is not auto-maintained on any driver'
+        );
+    }
+
+    /**
+     * CURRENT_TIMESTAMP itself is ANSI and valid as a default everywhere, so
+     * created_at needs no per-driver handling.
+     *
+     * @dataProvider grammarProvider
+     */
+    public function testCurrentTimestampDefaultIsPortable(Grammar $grammar): void
+    {
+        $bp = new Blueprint('posts');
+        $bp->timestamps();
+
+        $this->assertStringContainsString('DEFAULT CURRENT_TIMESTAMP', $grammar->compileCreate($bp));
+    }
+
+    /**
+     * updated_at stays nullable with no default on insert; it only gets a value
+     * once the row is modified.
+     *
+     * @dataProvider grammarProvider
+     */
+    public function testUpdatedAtIsNullableOnInsert(Grammar $grammar): void
+    {
+        $bp = new Blueprint('posts');
+        $bp->timestamps();
+
+        $this->assertMatchesRegularExpression(
+            '/updated_at.{0,40}DEFAULT NULL/s',
+            $grammar->compileCreate($bp)
+        );
+    }
+
+    /** Golden string pinning the exact DDL timestamps() produces on MySQL. */
+    public function testTimestampsMySqlOutput(): void
+    {
+        $bp = new Blueprint('posts');
+        $bp->timestamps();
+
+        $this->assertSame(
+            "CREATE TABLE `posts` (\n"
+            . "  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,\n"
+            . "  `updated_at` TIMESTAMP NULL DEFAULT NULL\n"
+            . ");",
+            (new MySqlGrammar())->compileCreate($bp)
+        );
+    }
 }
