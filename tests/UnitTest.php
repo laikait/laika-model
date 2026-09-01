@@ -259,9 +259,13 @@ class UnitTest extends TestCase
         $off = $model->table('pg_flags')->where(['name' => 'off'])->first();
         $on  = $model->table('pg_flags')->where(['name' => 'on'])->first();
 
-        // pdo_pgsql hands back a BOOLEAN as 'f' / 't'.
-        $this->assertSame('f', $off['active']);
-        $this->assertSame('t', $on['active']);
+        // Since PHP 8.1 pdo_pgsql returns native types, so a BOOLEAN arrives as
+        // a real bool; it is 'f' / 't' only when the connection stringifies
+        // fetches. Accept either — the point of the test is that the column
+        // round-tripped as a boolean at all, which the '' that PARAM_STR used to
+        // send could never do.
+        $this->assertContains($off['active'], [false, 'f'], 'false did not round-trip');
+        $this->assertContains($on['active'], [true, 't'], 'true did not round-trip');
     }
 
     public function testPgsqlInsertReturnsTheRowsOwnId(): void
