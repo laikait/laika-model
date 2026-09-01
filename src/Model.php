@@ -764,6 +764,10 @@ class Model
      * bare lastInsertId() — this returns '' there, and the caller must read the
      * sequence/generator itself.
      *
+     * The returned id is the last row's on pgsql, which reads it back through
+     * RETURNING, and the first of the final statement on mysql, which reports
+     * LAST_INSERT_ID(). Either is '' when the driver cannot name one.
+     *
      * @param array{} $data Insert Row('s) Data. Example: ['name' => 'John', 'age' => 30] or [0 => ['name' => 'John'], ['name' => 'Doe']]
      * @throws ModelException|\PDOException
      * @return string|false Returns the last inserted ID
@@ -807,75 +811,64 @@ class Model
 
         // Oracle needs INSERT ALL and Firebird needs EXECUTE BLOCK to batch;
         // rather than carry two more dialects, send those one row per statement.
-        $rowsPerStatement = in_array($driver, ['oci', 'firebird'], true) ? 1 : 1000;
+        //
+        // Everywhere else the real ceiling is the driver's placeholder limit and
+        // not a row count, so it has to be divided by the width of a row: pgsql
+        // and mysql carry the parameter count of a prepared statement in an
+        // int16, sqlite defaults to half that, and SQL Server stops at 2100. A
+        // flat 1000 rows overflowed all four on a wide enough table.
+        $maxPlaceholders = match ($driver) {
+            'sqlsrv' => 2100,
+            'sqlite' => 32766,
+            default  => 65535,
+        };
 
-        $stmt        = null;
-        $preparedSql = null;
+        $rowsPerStatement = in_array($driver, ['oci', 'firebird'], true)
+            ? 1
+            : max(1, min(1000, intdiv($maxPlaceholders, max(1, count($columns)))));
 
         $chunks = array_chunk($rows, $rowsPerStatement);
 
-        // More than one statement means a partial insert is possible, so the
-        // batch runs inside a transaction.
-        $wrap = count($chunks) > 1;
-
-        if ($wrap) {
-            Connection::beginTransaction($this->connection);
-        }
+        // pdo_pgsql's bare lastInsertId() is SELECT lastval(), which is scoped to
+        // the session rather than to this table: on a table with no sequence it
+        // hands back an id from an unrelated earlier insert, and an AFTER INSERT
+        // trigger that burns another sequence shadows the row's own value. Both
+        // are silent. RETURNING asks the statement itself instead.
+        $returning = $driver === 'pgsql' ? $this->sanitize($this->id) : null;
 
         try {
-        foreach ($chunks as $chunk) {
-
-            // Build placeholders for this chunk
-            $rowPlaceholders = '(' . implode(', ', array_fill(0, count($columns), '?')) . ')';
-            $placeholders    = implode(', ', array_fill(0, count($chunk), $rowPlaceholders));
-
-            // Build SQL
-            $sql = "INSERT INTO {$tbl} (" . implode(', ', $columns) . ") VALUES {$placeholders}";
-
-            // Add Queries to Log
-            Log::add($sql, $this->connection);
-
-            // Flatten bindings
-            $bindings = [];
-            foreach ($chunk as $row) {
-                $bindings = array_merge($bindings, array_values($row));
-            }
-
-            // Execute. Every full chunk produces identical SQL, so the handle is
-            // reused rather than re-prepared — this matters most on oci/firebird,
-            // where the chunk is a single row. The PDOException is left intact:
-            // wrapping it discarded errorInfo and the SQLSTATE, so callers could
-            // not tell a duplicate key from a dead connection.
-            if ($sql !== $preparedSql) {
-                $stmt        = $this->pdo()->prepare($sql);
-                $preparedSql = $sql;
-            }
-
-            $stmt->execute($bindings);
-        }
-
-            if ($wrap) {
-                Connection::commit($this->connection);
-            }
-        } catch (\Throwable $e) {
-            if ($wrap) {
-                try {
-                    Connection::rollBack($this->connection);
-                } catch (\Throwable) {
-                    // The original failure is the one worth reporting.
+            try {
+                $lastId = $this->runInsert($tbl, $columns, $chunks, $returning);
+            } catch (\PDOException $e) {
+                // 42703 undefined_column — the model's $id is not on this table
+                // (a join or log table). RETURNING is checked before anything is
+                // written, so the batch is intact: send it again without one.
+                // runInsert has already rolled back, so pgsql is not left with
+                // an aborted transaction here.
+                if ($returning === null || (string) $e->getCode() !== '42703') {
+                    throw $e;
                 }
-            }
 
-            throw $e;
+                $returning = null;
+                $lastId    = $this->runInsert($tbl, $columns, $chunks, null);
+            }
         } finally {
             $this->reset();
         }
 
+        // RETURNING answered it, so lastval() is not consulted at all.
+        if ($lastId !== null) {
+            return $lastId;
+        }
+
         // PDO_OCI and PDO_Firebird require the sequence/generator name here and
-        // return '' or throw without one. PostgreSQL throws for the same reason
-        // unless the table has a sequence it can infer. Don't pretend to have
-        // an id, and never turn a successful write into an exception.
-        if (in_array($driver, ['oci', 'firebird'], true)) {
+        // return '' or throw without one. pgsql only reaches this line when the
+        // table had no id column to return, and falling through to its bare
+        // lastInsertId() would resurrect the very bug RETURNING fixes: lastval()
+        // would hand back whatever sequence the session touched last. Don't
+        // pretend to have an id, and never turn a successful write into an
+        // exception.
+        if (in_array($driver, ['oci', 'firebird', 'pgsql'], true)) {
             return '';
         }
 
@@ -1274,17 +1267,116 @@ class Model
     }
 
     /**
-     * Prepare, bind and execute.
+     * Send the prepared chunks, optionally asking PostgreSQL for the id it
+     * generated.
      *
-     * PDOStatement::execute($array) binds every value as PDO::PARAM_STR. Column
-     * affinity usually hides that, but a comparison with no column to convert
-     * against — HAVING against an aggregate alias, say — then compares an
-     * integer to a string and silently matches nothing.
+     * The batch runs inside a transaction whenever a partial insert is possible
+     * — more than one statement — and always when RETURNING is in play, so a
+     * column name the table does not have can be rolled back and retried.
+     * Connection::beginTransaction() opens a SAVEPOINT rather than a second
+     * transaction when the caller already has one open, so this is safe to nest.
+     *
+     * @param string   $tbl       Already-quoted table name.
+     * @param string[] $columns   Already-quoted column names.
+     * @param array<int,array<int,array<string,mixed>>> $chunks Rows, batched.
+     * @param ?string  $returning Already-quoted id column, or null for no RETURNING.
+     * @throws \PDOException
+     * @return ?string The id RETURNING produced, or null when it was not used.
      */
-    private function run(string $sql, array $bindings): \PDOStatement
+    private function runInsert(string $tbl, array $columns, array $chunks, ?string $returning): ?string
     {
-        $stmt = $this->pdo()->prepare($sql);
+        $stmt        = null;
+        $preparedSql = null;
+        $lastId      = null;
+        $lastChunk   = array_key_last($chunks);
 
+        $wrap = count($chunks) > 1 || $returning !== null;
+
+        if ($wrap) {
+            Connection::beginTransaction($this->connection);
+        }
+
+        try {
+            foreach ($chunks as $index => $chunk) {
+
+                // Build placeholders for this chunk
+                $rowPlaceholders = '(' . implode(', ', array_fill(0, count($columns), '?')) . ')';
+                $placeholders    = implode(', ', array_fill(0, count($chunk), $rowPlaceholders));
+
+                // Build SQL
+                $sql = "INSERT INTO {$tbl} (" . implode(', ', $columns) . ") VALUES {$placeholders}";
+
+                // Only the final statement carries RETURNING: the id reported is
+                // the last row's, which is what lastval() used to hand back here.
+                $wantsId = $returning !== null && $index === $lastChunk;
+
+                if ($wantsId) {
+                    $sql .= " RETURNING {$returning}";
+                }
+
+                // Add Queries to Log
+                Log::add($sql, $this->connection);
+
+                // Flatten bindings
+                $bindings = [];
+                foreach ($chunk as $row) {
+                    $bindings = array_merge($bindings, array_values($row));
+                }
+
+                // Execute. Every full chunk produces identical SQL, so the handle is
+                // reused rather than re-prepared — this matters most on oci/firebird,
+                // where the chunk is a single row. The PDOException is left intact:
+                // wrapping it discarded errorInfo and the SQLSTATE, so callers could
+                // not tell a duplicate key from a dead connection.
+                if ($sql !== $preparedSql) {
+                    $stmt        = $this->pdo()->prepare($sql);
+                    $preparedSql = $sql;
+                }
+
+                // bindAll(), not execute($bindings): the array form binds every
+                // value as PARAM_STR, and (string) false is '', which pgsql
+                // rejects outright for a BOOLEAN, INTEGER or DATE column.
+                $this->bindAll($stmt, $bindings);
+
+                $stmt->execute();
+
+                if ($wantsId) {
+                    $ids    = $stmt->fetchAll(\PDO::FETCH_COLUMN, 0);
+                    $lastId = $ids === [] ? null : (string) end($ids);
+                }
+            }
+
+            if ($wrap) {
+                Connection::commit($this->connection);
+            }
+        } catch (\Throwable $e) {
+            if ($wrap) {
+                try {
+                    Connection::rollBack($this->connection);
+                } catch (\Throwable) {
+                    // The original failure is the one worth reporting.
+                }
+            }
+
+            throw $e;
+        }
+
+        return $lastId;
+    }
+
+    /**
+     * Bind a positional list onto a prepared statement with the PDO type each
+     * PHP value actually implies.
+     *
+     * PDOStatement::execute($array) binds every value as PDO::PARAM_STR instead.
+     * Column affinity usually hides that, but (string) false is '', which pgsql
+     * and sqlsrv reject outright for a BOOLEAN/BIT, INTEGER or DATE column; and
+     * a comparison with no column to convert against — HAVING against an
+     * aggregate alias, say — compares an integer to a string and silently
+     * matches nothing.
+     */
+    private function bindAll(\PDOStatement $stmt, array $bindings): void
+    {
         $i = 0;
         foreach ($bindings as $value) {
             $type = match (true) {
@@ -1296,6 +1388,16 @@ class Model
 
             $stmt->bindValue(++$i, $value, $type);
         }
+    }
+
+    /**
+     * Prepare, bind and execute.
+     */
+    private function run(string $sql, array $bindings): \PDOStatement
+    {
+        $stmt = $this->pdo()->prepare($sql);
+
+        $this->bindAll($stmt, $bindings);
 
         $stmt->execute();
 
