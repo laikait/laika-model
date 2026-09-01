@@ -567,4 +567,165 @@ class ModelTest extends TestCase
         $this->expectException(ModelException::class);
         (new Model())->get();
     }
+
+    // -----------------------------------------------------------------------
+    // insert() binding and batching
+    //
+    // insert() used to send its rows through PDOStatement::execute($array),
+    // which binds every value as PARAM_STR. (string) false is '', so a boolean
+    // column got the empty string: silently wrong data on SQLite and a hard
+    // 22P02 "invalid input syntax for type boolean" on PostgreSQL.
+    // -----------------------------------------------------------------------
+
+    public function testInsertBindsFalseAsABooleanNotAnEmptyString(): void
+    {
+        $this->requireSqlite();
+
+        Connection::add(['driver' => 'sqlite', 'database' => ':memory:']);
+        Schema::on()->create('flags', function (Blueprint $t): void {
+            $t->id();
+            $t->string('name', 20);
+            $t->boolean('active');
+        });
+
+        (new Model())->table('flags')->insert(['name' => 'off', 'active' => false]);
+        (new Model())->table('flags')->insert(['name' => 'on',  'active' => true]);
+
+        $off = (new Model())->table('flags')->where(['name' => 'off'])->first();
+        $on  = (new Model())->table('flags')->where(['name' => 'on'])->first();
+
+        // The distinction that matters: '' is what PARAM_STR produced, and it is
+        // neither 0 nor a value PostgreSQL will accept for a BOOLEAN.
+        $this->assertNotSame('', $this->field($off, 'active'));
+        $this->assertEquals(0, $this->field($off, 'active'));
+        $this->assertEquals(1, $this->field($on, 'active'));
+
+        // SQLite keeps the declared type of what was bound, so this asserts the
+        // PDO param type directly rather than inferring it from the value.
+        $type = Connection::get()
+            ->query("SELECT typeof(active) FROM flags WHERE name = 'off'")
+            ->fetchColumn();
+
+        $this->assertSame('integer', $type);
+    }
+
+    public function testInsertPreservesNullAndIntegerBindings(): void
+    {
+        $this->requireSqlite();
+
+        Connection::add(['driver' => 'sqlite', 'database' => ':memory:']);
+        Schema::on()->create('mixture', function (Blueprint $t): void {
+            $t->id();
+            $t->string('tag', 20);
+            $t->integer('n')->nullable();
+            $t->string('s', 20)->nullable();
+        });
+
+        (new Model())->table('mixture')->insert(['tag' => 'a', 'n' => 42, 's' => null]);
+
+        $row = (new Model())->table('mixture')->where(['tag' => 'a'])->first();
+
+        $this->assertEquals(42, $this->field($row, 'n'));
+        $this->assertNull($this->field($row, 's'));
+    }
+
+    /**
+     * The chunk size is a placeholder budget, not a row count. A flat 1000 rows
+     * overflowed every driver's parameter limit on a wide table — 65535 on
+     * pgsql and mysql, 32766 on sqlite, 2100 on sqlsrv.
+     */
+    public function testInsertChunksByPlaceholderBudgetNotRowCount(): void
+    {
+        $this->requireSqlite();
+
+        $cols = 70;
+
+        Connection::add(['driver' => 'sqlite', 'database' => ':memory:']);
+        Schema::on()->create('wide', function (Blueprint $t) use ($cols): void {
+            $t->id();
+            for ($i = 0; $i < $cols; $i++) {
+                $t->integer("c{$i}");
+            }
+        });
+
+        $rows = [];
+        for ($r = 0; $r < 5; $r++) {
+            $row = [];
+            for ($i = 0; $i < $cols; $i++) {
+                $row["c{$i}"] = $r * 100 + $i;
+            }
+            $rows[] = $row;
+        }
+
+        (new Model())->table('wide')->insert($rows);
+
+        $this->assertSame(5, (new Model())->table('wide')->count());
+        $this->assertEquals(104, $this->field(
+            (new Model())->table('wide')->where(['c0' => 100])->first(),
+            'c4'
+        ));
+    }
+
+    public function testInsertStillBatchesBeyondOneStatement(): void
+    {
+        $this->requireSqlite();
+
+        Connection::add(['driver' => 'sqlite', 'database' => ':memory:']);
+        Schema::on()->create('bulk', function (Blueprint $t): void {
+            $t->id();
+            $t->integer('v');
+        });
+
+        $rows = [];
+        for ($i = 0; $i < 2500; $i++) {
+            $rows[] = ['v' => $i];
+        }
+
+        $id = (new Model())->table('bulk')->insert($rows);
+
+        $this->assertSame(2500, (new Model())->table('bulk')->count());
+        $this->assertNotSame('', $id);
+    }
+
+    /**
+     * insert() opens a transaction of its own for a multi-statement batch, and
+     * on pgsql for the RETURNING probe. Connection turns that into a SAVEPOINT
+     * when the caller already has one open, so it must not disturb the outer
+     * transaction.
+     */
+    public function testInsertNestsInsideACallerTransaction(): void
+    {
+        $this->requireSqlite();
+
+        Connection::add(['driver' => 'sqlite', 'database' => ':memory:']);
+        Schema::on()->create('bulk', function (Blueprint $t): void {
+            $t->id();
+            $t->integer('v');
+        });
+
+        Connection::beginTransaction();
+        (new Model())->table('bulk')->insert(['v' => 999]);
+        $this->assertSame(1, Connection::transactionLevel());
+        Connection::commit();
+
+        $this->assertSame(0, Connection::transactionLevel());
+        $this->assertNotNull((new Model())->table('bulk')->where(['v' => 999])->first());
+    }
+
+    public function testInsertRollsBackTheOuterTransactionOnFailure(): void
+    {
+        $this->requireSqlite();
+
+        Connection::add(['driver' => 'sqlite', 'database' => ':memory:']);
+        Schema::on()->create('bulk', function (Blueprint $t): void {
+            $t->id();
+            $t->integer('v');
+        });
+
+        Connection::beginTransaction();
+        (new Model())->table('bulk')->insert(['v' => 1]);
+        Connection::rollBack();
+
+        $this->assertSame(0, (new Model())->table('bulk')->count());
+    }
 }
