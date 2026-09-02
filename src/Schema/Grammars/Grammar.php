@@ -288,8 +288,9 @@ abstract class Grammar
      * them from compileIndexes().
      *
      * @param array{columns: string[], name?: ?string} $index
+     * @param bool $ifNotExists Guard the statement, for a table that is itself guarded.
      */
-    public function compileCreateIndex(string $table, array $index): string
+    public function compileCreateIndex(string $table, array $index, bool $ifNotExists = false): string
     {
         $base = $index['name'] ?? implode('_', $index['columns']);
 
@@ -306,7 +307,12 @@ abstract class Grammar
         // skipped the CREATE TABLE, reached this line, and aborted on an index
         // that already existed - taking the whole migration down with it, seeds
         // included. Guarding the index too is what makes a migration re-runnable.
-        $guard = $this->supportsIndexIfNotExists() ? 'IF NOT EXISTS ' : '';
+        //
+        // Only when the table itself is guarded, though. A plain create() dies
+        // at the CREATE TABLE and never reaches this statement, so a guard there
+        // would buy nothing and would only make the SQL less faithful - Converter
+        // rewrites a dump through this same method.
+        $guard = $ifNotExists && $this->supportsIndexIfNotExists() ? 'IF NOT EXISTS ' : '';
 
         return "CREATE INDEX {$guard}{$this->wrapColumn($name)} ON {$this->wrapTable($table)} ({$cols});";
     }
@@ -376,14 +382,19 @@ abstract class Grammar
      *
      * Empty on MySQL, where compileCreate() emits indexes inline instead.
      *
+     * A blueprint carrying the ifNotExists option - what createIfNotExists()
+     * sets, and what a source dump that said CREATE TABLE IF NOT EXISTS parses
+     * into - passes that guard down to every index it owns.
+     *
      * @return string[]
      */
     public function compileIndexes(Blueprint $blueprint): array
     {
-        $table = $blueprint->getTable();
+        $table       = $blueprint->getTable();
+        $ifNotExists = (bool) $blueprint->getOption('ifNotExists');
 
         return array_map(
-            fn(array $index): string => $this->compileCreateIndex($table, $index),
+            fn(array $index): string => $this->compileCreateIndex($table, $index, $ifNotExists),
             $blueprint->getIndexes()
         );
     }
