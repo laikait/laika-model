@@ -76,6 +76,9 @@ class SqliteGrammar extends Grammar
         return "ALTER TABLE {$this->wrapTable($from)} RENAME TO {$this->wrapTable($to)};";
     }
 
+    /** Supported since SQLite 3.3.0 (2006); PHP has never bundled older. */
+    protected function supportsIndexIfNotExists(): bool { return true; }
+
     // -----------------------------------------------------------------------
     // SQLite type overrides
     // -----------------------------------------------------------------------

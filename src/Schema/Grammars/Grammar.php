@@ -301,7 +301,32 @@ abstract class Grammar
         $name = $this->prefixName('idx_', $this->qualifyIndexName($table, $base));
         $cols = implode(', ', array_map([$this, 'wrapColumn'], $index['columns']));
 
-        return "CREATE INDEX {$this->wrapColumn($name)} ON {$this->wrapTable($table)} ({$cols});";
+        // createIfNotExists() guards the table and nothing else, but on every
+        // driver except MySQL the indexes are a *second* statement. So a re-run
+        // skipped the CREATE TABLE, reached this line, and aborted on an index
+        // that already existed - taking the whole migration down with it, seeds
+        // included. Guarding the index too is what makes a migration re-runnable.
+        $guard = $this->supportsIndexIfNotExists() ? 'IF NOT EXISTS ' : '';
+
+        return "CREATE INDEX {$guard}{$this->wrapColumn($name)} ON {$this->wrapTable($table)} ({$cols});";
+    }
+
+    /**
+     * Whether this driver accepts `CREATE INDEX IF NOT EXISTS`.
+     *
+     * False here, so a driver nobody has checked keeps emitting exactly the SQL
+     * it emits today rather than syntax it might reject. PostgreSQL and SQLite
+     * override it.
+     *
+     * MySQL and MariaDB have no such form and do not need one: compileIndexes()
+     * is empty there because compileCreate() emits indexes inline, inside the
+     * CREATE TABLE that ifNotExists already guards. SQL Server, Oracle and
+     * Firebird have no form either and would each need their own catalogue
+     * lookup instead, which is a different change from this one.
+     */
+    protected function supportsIndexIfNotExists(): bool
+    {
+        return false;
     }
 
     /**
