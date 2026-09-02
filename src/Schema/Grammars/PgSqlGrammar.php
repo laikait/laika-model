@@ -61,6 +61,12 @@ class PgSqlGrammar extends Grammar
         return "ALTER TABLE {$this->wrapTable($from)} RENAME TO {$this->wrapTable($to)};";
     }
 
+    /**
+     * Supported since PostgreSQL 9.5 (2016), which is older than any server
+     * this driver can reach - the PDO pgsql floor is well below it.
+     */
+    protected function supportsIndexIfNotExists(): bool { return true; }
+
     // PG uses SERIAL / BIGSERIAL for auto-increment
     protected function typeId(array $col): string           { return 'SERIAL'; }
     protected function typeBigId(array $col): string        { return 'BIGSERIAL'; }

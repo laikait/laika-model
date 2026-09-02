@@ -320,6 +320,72 @@ class GrammarTest extends TestCase
         );
     }
 
+    /** A one-index table, guarded or not, for the two tests below. */
+    private function indexedBlueprint(array $options): Blueprint
+    {
+        $bp = new Blueprint('posts', $options);
+        $bp->integer('author_id');
+        $bp->index('author_id');
+
+        return $bp;
+    }
+
+    /**
+     * createIfNotExists() guards the CREATE TABLE, but on every driver except
+     * MySQL the indexes are a *second* statement. A re-run skipped the table,
+     * reached the index and aborted the whole migration on an index that
+     * already existed — so the blueprint's ifNotExists option has to reach the
+     * indexes too.
+     */
+    public function testAGuardedTableGuardsItsIndexesToo(): void
+    {
+        foreach ([new PgSqlGrammar(), new SqliteGrammar()] as $grammar) {
+            $this->assertSame(
+                ['CREATE INDEX IF NOT EXISTS "idx_posts_author_id" ON "posts" ("author_id");'],
+                $grammar->compileIndexes($this->indexedBlueprint(['ifNotExists' => true])),
+                $grammar::class
+            );
+
+            // A plain create() gets the plain statement: it dies at the CREATE
+            // TABLE and never reaches this one, so a guard here would buy
+            // nothing — and Converter rewrites dumps through the same method,
+            // where an unasked-for guard is just an unfaithful conversion.
+            $this->assertSame(
+                ['CREATE INDEX "idx_posts_author_id" ON "posts" ("author_id");'],
+                $grammar->compileIndexes($this->indexedBlueprint([])),
+                $grammar::class
+            );
+        }
+    }
+
+    /**
+     * SQL Server, Oracle and Firebird have no CREATE INDEX IF NOT EXISTS form.
+     * Emitting it there would turn a re-runnable migration into a syntax error.
+     *
+     * @dataProvider grammarProvider
+     */
+    public function testOnlyDriversWithTheSyntaxGuardTheirIndexes(Grammar $grammar): void
+    {
+        if ($grammar instanceof MySqlGrammar) {
+            $this->markTestSkipped('MySQL emits indexes inline, inside the guarded CREATE TABLE.');
+        }
+
+        $sql = $grammar->compileIndexes($this->indexedBlueprint(['ifNotExists' => true]))[0];
+
+        if ($grammar instanceof PgSqlGrammar || $grammar instanceof SqliteGrammar) {
+            $this->assertStringStartsWith('CREATE INDEX IF NOT EXISTS ', $sql);
+
+            return;
+        }
+
+        $this->assertStringStartsWith('CREATE INDEX ', $sql);
+        $this->assertStringNotContainsString(
+            'IF NOT EXISTS',
+            $sql,
+            'Not valid syntax on ' . $grammar::class
+        );
+    }
+
     /**
      * MySQL scopes index names to the table, PostgreSQL to the schema and
      * SQLite to the database. A mysqldump with `KEY userid (userid)` on eleven
