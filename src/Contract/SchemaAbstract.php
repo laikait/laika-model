@@ -18,11 +18,18 @@ abstract class SchemaAbstract
 {
     protected string $table;
 
-    protected string $connection;
+    protected string $connection = 'default';
 
     public function __construct(?string $connection = null)
     {
-        $this->connection = $connection ?: 'default';
+        // An explicit name wins; otherwise keep the connection the schema
+        // declares. This used to reset it to 'default', so the property was
+        // ignored and `app:migrate` (which passes nothing) always used 'default'.
+        if ($connection !== null && $connection !== '') {
+            $this->connection = $connection;
+        } elseif (!isset($this->connection)) {
+            $this->connection = 'default';
+        }
     }
 
     abstract public function up(): void;

@@ -12,8 +12,9 @@ declare(strict_types=1);
 
 namespace Laika\Model;
 
-use Laika\Model\Exceptions\ModelException;
 use Laika\Model\Schema\Expression;
+use Laika\Model\Exceptions\ModelException;
+use Laika\Model\Exceptions\ConnectionException;
 
 class Model
 {
@@ -34,6 +35,28 @@ class Model
 
     /** @var array Join Clauses */
     protected array $joins = [];
+
+    /** @var string[] Tables joined into the current query, unquoted, for cache invalidation */
+    protected array $joinTables = [];
+
+    /** @var bool Whether remember() was called for the current query */
+    private bool $remember = false;
+
+    /** @var ?int TTL passed to remember(); null uses the configured default */
+    private ?int $rememberTtl = null;
+
+    /**
+     * @var ?callable Returns the store query results are cached in, or null.
+     * A resolver rather than the store itself, so nothing is built or connected
+     * until a query actually asks to be remembered.
+     */
+    private static $queryCache = null;
+
+    /** @var int Seconds a remembered result is kept when remember() is given none */
+    private static int $queryCacheTtl = 60;
+
+    /** @var ?object Returned by the store only on a miss; compared by identity */
+    private static ?object $miss = null;
 
     /** @var array Where Clauses */
     protected array $wheres = [];
@@ -158,6 +181,17 @@ class Model
      */
     private function refreshConnection(): void
     {
+        // Add Connection if doesn't exists
+        if (!Connection::has($this->connection)) {
+            $config = config('database', $this->connection);
+            if ($config === null) {
+                throw new ConnectionException("Connection [{$this->connection}] is not configured!");
+            }
+            // Register under this model's name. Without it the config lands on
+            // the default name, overwriting 'default', and get() below throws.
+            Connection::add($config, $this->connection);
+        }
+
         $this->pdo        = Connection::get($this->connection);
         $this->driver     = Connection::driver($this->connection);
         $this->generation = Connection::generation();
@@ -260,6 +294,8 @@ class Model
         }
 
         $type = strtoupper($type);
+        // Kept unquoted: a write to this table has to invalidate this query
+        $this->joinTables[] = $table;
         // Quote String
         $table = $this->sanitize($table);
         $first = $this->sanitize($first);
@@ -566,12 +602,38 @@ class Model
     public function get(): array
     {
         $sql = $this->build();
-        Log::add($sql, $this->connection);
 
         try {
+            // The key is taken after build(), which folds the HAVING bindings in
+            // and appends the soft-delete predicate: taken earlier it would miss
+            // both and two different queries could share one entry.
+            $key = $this->queryCacheKey('get', $sql);
+
+            if ($key !== null) {
+                $cached = $this->queryCacheRead($key);
+
+                if (is_array($cached)) {
+                    // Raw rows are cached, not cast ones, so the model's casts
+                    // apply on a hit exactly as on a miss
+                    return array_map(fn (array $row) => $this->cast($cached['objects'] ? (object) $row : $row), $cached['rows']);
+                }
+            }
+
+            // Logged only when the database is actually asked
+            Log::add($sql, $this->connection);
+
             $stmt = $this->run($sql, $this->bindings);
 
             $rows = $stmt->fetchAll();
+
+            if ($key !== null) {
+                // Stored as arrays: under FETCH_OBJ a row is a stdClass, which
+                // the cache deliberately refuses to rebuild from serialized data
+                $this->queryCacheWrite($key, [
+                    'objects' => isset($rows[0]) && is_object($rows[0]),
+                    'rows'    => array_map(static fn ($row) => (array) $row, $rows),
+                ]);
+            }
 
             foreach ($rows as $k => $row) {
                 $rows[$k] = $this->cast($row);
@@ -668,17 +730,29 @@ class Model
         $this->page  = null;
 
         $sql = $this->build();
-        Log::add($sql, $this->connection);
 
         try {
-            $stmt   = $this->run($sql, $this->bindings);
-            $result = $stmt->fetch();
+            $key = $this->queryCacheKey('count', $sql);
 
-            if ($result === false) {
-                return 0;
+            if ($key !== null) {
+                $cached = $this->queryCacheRead($key);
+
+                if (is_int($cached)) {
+                    return $cached;
+                }
             }
 
-            return (int) $this->rowGet($result, 'aggregate');
+            Log::add($sql, $this->connection);
+
+            $stmt   = $this->run($sql, $this->bindings);
+            $result = $stmt->fetch();
+            $count  = $result === false ? 0 : (int) $this->rowGet($result, 'aggregate');
+
+            if ($key !== null) {
+                $this->queryCacheWrite($key, $count);
+            }
+
+            return $count;
         } finally {
             $this->reset();
         }
@@ -856,6 +930,8 @@ class Model
             $this->reset();
         }
 
+        $this->invalidateQueryCache($this->table);
+
         // RETURNING answered it, so lastval() is not consulted at all.
         if ($lastId !== null) {
             return $lastId;
@@ -998,6 +1074,7 @@ class Model
 
         try {
             $stmt = $this->run($sql, array_merge(array_values($data), $this->bindings));
+            $this->invalidateQueryCache($this->table);
 
             return $stmt->rowCount();
         } finally {
@@ -1034,6 +1111,7 @@ class Model
 
         try {
             $stmt = $this->run($sql, $this->bindings);
+            $this->invalidateQueryCache($this->table);
 
             return $stmt->rowCount();
         } finally {
@@ -1097,6 +1175,7 @@ class Model
 
         try {
             $stmt = $this->run($sql, array_merge([$number], $this->bindings));
+            $this->invalidateQueryCache(str_contains($column, '.') ? $tblName : $this->table);
 
             return $stmt->rowCount();
         } finally {
@@ -1226,6 +1305,68 @@ class Model
             // transaction into an unrecognisable RuntimeException.
             throw $e;
         }
+    }
+
+    /**
+     * Cache This Query's Result
+     *
+     * Opt-in per query, and a no-op unless a store was configured through
+     * setQueryCache() -- the query then simply runs. get() and count() honour it;
+     * first(), find() and pluck() go through get(). cursor() never caches: it
+     * exists for result sets too large to hold, which is also too large to cache.
+     *
+     * A write through this model to the table, or to any table joined into the
+     * query, invalidates it. A write the model cannot see -- execute() with raw
+     * SQL, another application, a table reached only through a raw expression
+     * or subquery -- does not; call forgetQueryCache() for those.
+     *
+     * @param ?int $ttl Seconds; null uses the configured default
+     * @return static
+     */
+    public function remember(?int $ttl = null): static
+    {
+        $this->remember = true;
+        $this->rememberTtl = $ttl;
+
+        return $this;
+    }
+
+    /**
+     * Configure Where Remembered Queries Are Cached
+     *
+     * Takes a resolver so nothing is built or connected at boot, only when a
+     * query first asks. It must return an object with get(), set() and pop() --
+     * a Laika\Cache\Contracts\CacheDriverInterface -- or null for no cache.
+     * This package does not require laika-cache, so the type is not declared.
+     *
+     * @param ?callable $resolver Null disables query caching
+     * @param int $ttl Default seconds for remember() without its own TTL
+     * @return void
+     */
+    public static function setQueryCache(?callable $resolver, int $ttl = 60): void
+    {
+        self::$queryCache = $resolver;
+        self::$queryCacheTtl = max(0, $ttl);
+    }
+
+    /**
+     * Invalidate Every Cached Query on a Table
+     *
+     * For writes the model does not see. Takes effect after the current
+     * transaction commits, like every other invalidation.
+     *
+     * @param string $table Unquoted table name
+     * @param ?string $connection Default is 'default'
+     * @return void
+     */
+    public static function forgetQueryCache(string $table, ?string $connection = null): void
+    {
+        $connection ??= 'default';
+        $key = self::generationKey($connection, $table);
+
+        Connection::afterCommit(static function () use ($key): void {
+            self::cacheStore()?->pop($key);
+        }, $connection);
     }
 
     /**
@@ -1607,6 +1748,155 @@ class Model
     }
 
     /**
+     * Cache Key For The Current Query, or Null When it Must Not be Cached
+     *
+     * Null inside a transaction: a read there can see rows that are not
+     * committed yet, and caching those would hand them to every other request.
+     *
+     * @param string $kind get or count, so the two never share an entry
+     * @param string $sql The built statement
+     * @return ?string
+     */
+    private function queryCacheKey(string $kind, string $sql): ?string
+    {
+        if (!$this->remember || self::$queryCache === null) {
+            return null;
+        }
+
+        if (Connection::transactionLevel($this->connection) > 0) {
+            return null;
+        }
+
+        $store = self::cacheStore();
+
+        if ($store === null) {
+            return null;
+        }
+
+        $generations = [];
+
+        foreach (array_unique(array_merge([$this->table], $this->joinTables)) as $table) {
+            $generations[$table] = $this->generation($store, $table);
+        }
+
+        try {
+            $fingerprint = serialize([$kind, $this->connection, $this->driver(), $sql, $this->bindings, $generations]);
+        } catch (\Throwable) {
+            // A binding that cannot be serialized cannot be part of a key
+            return null;
+        }
+
+        return 'query:' . sha1($fingerprint);
+    }
+
+    /**
+     * @param string $key
+     * @return mixed The cached value, or the miss sentinel
+     */
+    private function queryCacheRead(string $key): mixed
+    {
+        self::$miss ??= new \stdClass();
+
+        try {
+            return self::cacheStore()?->get($key, self::$miss) ?? self::$miss;
+        } catch (\Throwable) {
+            // A cache that fails is a miss, never a failed query
+            return self::$miss;
+        }
+    }
+
+    /**
+     * @param string $key
+     * @param mixed $value
+     * @return void
+     */
+    private function queryCacheWrite(string $key, mixed $value): void
+    {
+        try {
+            self::cacheStore()?->set($key, $value, $this->rememberTtl ?? self::$queryCacheTtl);
+        } catch (\Throwable) {
+            // Not caching is always a safe outcome
+        }
+    }
+
+    /**
+     * Invalidate a Table's Cached Queries Once The Write is Committed
+     * @param string $table
+     * @return void
+     */
+    private function invalidateQueryCache(string $table): void
+    {
+        // Nothing configured, nothing cached, nothing to do: writes stay free
+        if (self::$queryCache === null) {
+            return;
+        }
+
+        self::forgetQueryCache($table, $this->connection);
+    }
+
+    /**
+     * A Table's Current Generation Token
+     *
+     * Invalidation deletes the token rather than counting it up. A counter that
+     * expired, or that Memcached evicted, would restart and could line up with a
+     * key some old entry was stored under. A token minted fresh whenever it is
+     * missing never does: losing it can only cause a miss.
+     *
+     * @param object $store
+     * @param string $table
+     * @return string
+     */
+    private function generation(object $store, string $table): string
+    {
+        $key = self::generationKey($this->connection, $table);
+
+        try {
+            $token = $store->get($key);
+
+            if (is_string($token) && $token !== '') {
+                return $token;
+            }
+
+            $token = bin2hex(random_bytes(8));
+            // No expiry: the token must outlive every entry keyed on it
+            $store->set($key, $token, 0);
+
+            return $token;
+        } catch (\Throwable) {
+            // Unique per call, so a broken store yields a miss, never a stale hit
+            return bin2hex(random_bytes(8));
+        }
+    }
+
+    /**
+     * @param string $connection
+     * @param string $table
+     * @return string
+     */
+    private static function generationKey(string $connection, string $table): string
+    {
+        return 'query-gen:' . $connection . ':' . strtolower(trim($table));
+    }
+
+    /**
+     * @return ?object
+     */
+    private static function cacheStore(): ?object
+    {
+        if (self::$queryCache === null) {
+            return null;
+        }
+
+        try {
+            $store = (self::$queryCache)();
+        } catch (\Throwable) {
+            return null;
+        }
+
+        return is_object($store) ? $store : null;
+    }
+
+    /**
      * Reset Query
      * @return void
      */
@@ -1614,6 +1904,9 @@ class Model
     {
         $this->columns  =   '*';
         $this->joins    =   [];
+        $this->joinTables = [];
+        $this->remember =   false;
+        $this->rememberTtl = null;
         $this->wheres   =   [];
         $this->bindings =   [];
         $this->groupBy  =   [];
