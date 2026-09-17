@@ -52,4 +52,18 @@ class Log
     {
         return array_sum(array_map('count', self::$queries));
     }
+
+    /**
+     * Forget Logged Queries
+     *
+     * add() appends every query for the life of the process. Under FPM that is
+     * one request; in a worker that runs job after job it grows until the
+     * worker's memory guard stops it. Call between jobs.
+     *
+     * @return void
+     */
+    public static function flush(): void
+    {
+        self::$queries = [];
+    }
 }

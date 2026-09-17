@@ -49,6 +49,12 @@ final class Connection
     /** @var array<string,int> Transaction / savepoint depth, keyed by connection name */
     private static array $transactions = [];
 
+    /**
+     * @var array<string,callable[]> Work waiting for the outermost commit, keyed
+     * by connection name. Discarded when that transaction rolls back.
+     */
+    private static array $afterCommit = [];
+
     /** @var string Name used whenever a caller omits the connection name */
     private static string $default = 'default';
 
@@ -250,7 +256,7 @@ final class Connection
     {
         $name = self::resolve($name);
 
-        unset(self::$instances[$name], self::$drivers[$name], self::$transactions[$name]);
+        unset(self::$instances[$name], self::$drivers[$name], self::$transactions[$name], self::$afterCommit[$name]);
         self::$generation++;
     }
 
@@ -276,6 +282,7 @@ final class Connection
         self::$instances    = [];
         self::$drivers      = [];
         self::$transactions = [];
+        self::$afterCommit  = [];
         self::$generation++;
     }
 
@@ -288,6 +295,7 @@ final class Connection
         self::$instances    = [];
         self::$drivers      = [];
         self::$transactions = [];
+        self::$afterCommit  = [];
         self::$default      = 'default';
         self::$generation++;
     }
@@ -388,6 +396,35 @@ final class Connection
     // -----------------------------------------------------------------------
 
     /**
+     * Run Work Once The Data it Depends on is Committed
+     *
+     * Outside a transaction it runs now. Inside one it waits for the outermost
+     * commit -- a savepoint release is not a commit -- and is dropped if that
+     * transaction rolls back. A cache invalidated before commit lets another
+     * process re-cache the old rows under the new key; one invalidated on a
+     * rollback throws away entries that were still correct.
+     *
+     * A savepoint rolled back inside a transaction that then commits still
+     * runs its work. Over-invalidating costs a cache miss; the reverse would
+     * serve stale data.
+     *
+     * @param callable $callback
+     * @param ?string $name Connection name
+     * @return void
+     */
+    public static function afterCommit(callable $callback, ?string $name = null): void
+    {
+        $name = self::resolve($name);
+
+        if (self::transactionLevel($name) === 0) {
+            $callback();
+            return;
+        }
+
+        self::$afterCommit[$name][] = $callback;
+    }
+
+    /**
      * Current transaction depth for a connection. 0 means no active transaction.
      */
     public static function transactionLevel(?string $name = null): int
@@ -442,6 +479,18 @@ final class Connection
         }
 
         self::$transactions[$name] = $level - 1;
+
+        // Only now is the data visible to anyone else, so only now may the work
+        // that depends on it run. Taken off the queue first, so a callback that
+        // opens its own transaction cannot re-run the rest.
+        if ($level === 1) {
+            $pending = self::$afterCommit[$name] ?? [];
+            unset(self::$afterCommit[$name]);
+
+            foreach ($pending as $callback) {
+                $callback();
+            }
+        }
     }
 
     /**
@@ -462,6 +511,8 @@ final class Connection
 
         if ($level === 1) {
             $pdo->rollBack();
+            // Nothing it depended on was stored
+            unset(self::$afterCommit[$name]);
         } else {
             $pdo->exec(self::savepointSql('rollback', $level - 1, self::driver($name)));
         }
